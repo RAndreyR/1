@@ -13,10 +13,21 @@ from app.utils.normalization import (
 )
 
 
-def audit_shipment(shipment: Shipment, matcher: ProductMatcher) -> AuditRow:
+def audit_shipment(
+    shipment: Shipment, matcher: ProductMatcher, product_id: str | None = None,
+) -> AuditRow:
     quarter = normalize_quarter(shipment.quarter)
     client_type = normalize_client_type(shipment.client_type)
     product, match_kind = matcher.match(shipment.product_raw)
+    if product_id is not None:
+        if product_id not in matcher.by_id:
+            raise CalculationInputError('Assignment must reference a current price-list product')
+        if match_kind == 'exact' and product.id != product_id:
+            raise CalculationInputError('An exact product match cannot be overridden')
+        product = matcher.by_id[product_id]
+        if match_kind != 'exact':
+            match_kind = 'manual'
+
     actual = shipment.unit_price
     if actual is None or actual == ZERO:
         actual = shipment.revenue / shipment.quantity if shipment.quantity != ZERO else None
@@ -51,11 +62,14 @@ def calculate_kpi(
     shipments: Iterable[Shipment], products: Iterable[Product], plans: Plans,
     rules: Rules = Rules(), paid_history: Mapping[int, Decimal] | None = None,
     *, aliases: Mapping[str, str] | None = None,
+    product_assignments: Mapping[int, str] | None = None,
 ) -> CalculationResult:
     """Calculate one employee/year.
 
     Omitted paid_history assumes gated Q1-Q3 amounts were paid. An explicit
     history uses zero for omitted quarters. All inputs and snapshots stay immutable.
+    Explicit product_assignments address original row numbers, including blank
+    product names, without changing raw source text or overriding exact matches.
     Fractional kopecks are retained; round only when formatting money.
     """
     if not isinstance(plans, Plans) or not isinstance(rules, Rules):
@@ -64,16 +78,24 @@ def calculate_kpi(
     with localcontext() as context:
         context.prec = 50
         context.rounding = ROUND_HALF_UP
-        return _calculate(shipments, products, plans, rules, paid_history, aliases)
+        return _calculate(shipments, products, plans, rules, paid_history, aliases, product_assignments)
 
 
 def _calculate(
     shipments: Iterable[Shipment], products: Iterable[Product], plans: Plans,
     rules: Rules, paid_history: Mapping[int, Decimal] | None,
     aliases: Mapping[str, str] | None,
+    product_assignments: Mapping[int, str] | None,
 ) -> CalculationResult:
     matcher = ProductMatcher(products, aliases)
-    audit = tuple(audit_shipment(s, matcher) for s in shipments)
+    shipments = tuple(shipments)
+    assignments = dict(product_assignments or {})
+    source_rows = {s.source_row for s in shipments}
+    if any(product_id not in matcher.by_id for product_id in assignments.values()):
+        raise CalculationInputError('Assignment must reference a current price-list product')
+    if any(type(row) is not int or row not in source_rows for row in assignments):
+        raise CalculationInputError('Assignment must reference an imported source row')
+    audit = tuple(audit_shipment(s, matcher, assignments.get(s.source_row)) for s in shipments)
     if len({a.shipment.source_row for a in audit}) != len(audit):
         raise CalculationInputError('Duplicate source row in a single import')
     green = {(q, t, c): ZERO for q in range(1, 5) for t in CLIENT_TYPES for c in CATEGORIES}

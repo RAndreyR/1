@@ -14,8 +14,20 @@ def reference():
     return json.loads((FIXTURE.parent / 'trofimov_expected.json').read_text(encoding='utf-8'))
 
 
-@pytest.fixture(scope='module')
-def workbook_result():
+@pytest.fixture(scope='module', params=['fixture_adapter', 'production_importer'])
+def workbook_result(request):
+    if request.param == 'production_importer':
+        from app.services.excel_importer import import_excel
+        from app.services.mapping_service import ImportSession
+        imported = import_excel(FIXTURE)
+        assert not imported.errors
+        session = ImportSession(imported)
+        assert session.validation.pending_mapping_rows == (68, 103, 156, 158)
+        for entry in session.mappings:
+            if entry.status == 'unresolved':
+                session.leave_unmatched(entry.key)
+        result = session.calculate(Plans('20000000','10000000','0','0'))
+        return imported.shipments, imported.products, result
     shipments, products = read_fixture()
     # Test scenario only. Mandatory plans are not taken from Excel's KPI sheet.
     result = calculate_kpi(shipments, products, Plans('20000000','10000000','0','0'))

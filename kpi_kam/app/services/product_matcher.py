@@ -1,4 +1,4 @@
-"""Pure exact/explicit-alias matching. Persistence belongs to Phase 2."""
+"""Pure exact/explicit-alias matching, independent of alias persistence."""
 from collections.abc import Iterable, Mapping
 from app.models.domain import Product
 from app.utils.normalization import CalculationInputError, normalize_text

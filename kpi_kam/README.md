@@ -170,8 +170,16 @@ SQLite-операция атомарна: ошибка записи не ост�
 Для Linux/CI без дисплея:
 
 ```sh
+# Ubuntu/Debian: системные библиотеки Qt не входят в pip-пакет PySide6.
+sudo apt-get update
+sudo apt-get install --yes --no-install-recommends libegl1 libgl1 libopengl0 libxkbcommon0
 QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/tmp/kpi-kam-cache .venv/bin/python -m pytest -q
 ```
+
+`offscreen` позволяет тестировать GUI без дисплея, но Qt всё равно загружает
+системные EGL/OpenGL-библиотеки. Ошибка `libEGL.so.1: cannot open shared object
+file` означает, что нужно установить пакет `libegl1`. Linux workflow
+устанавливает эти пакеты перед Python-зависимостями и тестами.
 
 Для обычного desktop-запуска переменная `QT_QPA_PLATFORM=offscreen` не нужна.
 PySide6 устанавливается вместе с требованиями; Microsoft Excel и интернет

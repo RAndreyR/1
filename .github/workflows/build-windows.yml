@@ -1,0 +1,56 @@
+name: Build Windows onedir
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'kpi_kam/**'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    paths:
+      - 'kpi_kam/**'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: kpi_kam
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+          cache: 'pip'
+          cache-dependency-path: |
+            kpi_kam/requirements.txt
+            kpi_kam/requirements-build.txt
+      - name: Test, build and verify frozen application
+        shell: pwsh
+        run: |
+          $env:KPI_BUILD_PYTHON = (Get-Command python).Source
+          cmd /c build_windows.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload portable Windows application
+        uses: actions/upload-artifact@v4
+        with:
+          name: KPI_KAM-windows-x64-onedir
+          path: kpi_kam/dist/KPI_KAM/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload frozen verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KPI_KAM-windows-build-report
+          path: kpi_kam/build/packaging-smoke.json
+          if-no-files-found: warn
+          retention-days: 14

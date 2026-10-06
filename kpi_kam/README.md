@@ -24,8 +24,100 @@ python -m venv .venv
 задать другую папку данных. `main.py demo` запускает искусственную демонстрацию
 ядра. Команды `check` и `calculate` сохранены для работы без GUI (см. ниже).
 После установки pytest тесты и ядро работают без интернета и Microsoft Excel.
-Сборка exe остается для Phase 6; `build_windows.bat`
-будет реализован в Phase 6.
+
+## Windows-сборка PyInstaller (onedir)
+
+Для сборки нужны **Windows x64 и Python 3.12 x64** с Python Launcher (`py`).
+Скачивание зависимостей требует интернета; готовое приложение работает без
+Python, Microsoft Excel и интернета. Версии PyInstaller и Qt зафиксированы
+в `requirements-build.txt` и `requirements.txt`.
+
+Из корня клонированного репозитория, в **cmd.exe**:
+
+```bat
+cd kpi_kam
+build_windows.bat
+```
+
+В **PowerShell**:
+
+```powershell
+Set-Location kpi_kam
+.\build_windows.bat
+if ($LASTEXITCODE -ne 0) { throw "Windows build failed" }
+```
+
+Если Python Launcher не установлен, перед запуском задайте абсолютный путь
+к Python 3.12 x64 (пример для cmd.exe):
+
+```bat
+set "KPI_BUILD_PYTHON=C:\Python312\python.exe"
+build_windows.bat
+```
+
+Скрипт работает из своего каталога, создает отдельную `.venv-build`,
+устанавливает зависимости, запускает все pytest-тесты и выполняет:
+
+```bat
+.venv-build\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath dist --workpath build\pyinstaller KPI_KAM.spec
+.venv-build\Scripts\python.exe tools\smoke_frozen.py --executable dist\KPI_KAM\KPI_KAM.exe --fixture "tests\fixtures\KPI Трофимов Дмитрий 2026.xlsm" --expected tests\fixtures\trofimov_expected.json --report build\packaging-smoke.json
+```
+
+Spec задает `onedir`, имя `KPI_KAM` и запуск GUI без консольного окна.
+Проверка запускает **собранный executable** в Qt offscreen, импортирует
+книгу Трофимова, явно оставляет неизвестные товары несопоставленными,
+проверяет Decimal-результаты по независимому эталону, аудит и SQLite-историю.
+Планы проверки — Q1 20 000 000, Q2 10 000 000, Q3/Q4 0; это тестовые планы.
+Отчет находится в `build\packaging-smoke.json`. Любая ошибка тестов,
+сборки или проверки executable завершает скрипт ненулевым кодом.
+Переменные offscreen действуют только внутри скрипта сборки.
+
+Результат:
+
+```text
+dist\KPI_KAM\
+  KPI_KAM.exe
+  _internal\       # Python runtime, Qt DLL, плагины и остальные зависимости
+```
+
+Копируйте **всю папку `dist\KPI_KAM`**, затем запускайте `KPI_KAM.exe`.
+Отдельный exe без `_internal` работать не будет. Для другой базы данных:
+
+```bat
+dist\KPI_KAM\KPI_KAM.exe gui --db "D:\KPI data\kpi_kam.db"
+```
+
+По умолчанию база и логи создаются в `%APPDATA%\KPI_KAM`, независимо от
+места установки приложения. В дистрибутив не включаются исходные Excel-книги,
+тестовые fixtures, пользовательские базы или логи.
+
+## Windows artifact в GitHub Actions
+
+PyInstaller создает executable для платформы, на которой запущен.
+Windows executable нужно собирать на Windows; Linux не создает PE/`.exe`
+этой конфигурацией. Workflow `.github/workflows/build-windows.yml` использует
+`windows-2022`, Python 3.12 x64 и тот же `build_windows.bat`.
+
+После отправки изменений в GitHub сборка запускается при push/PR с изменениями
+в `kpi_kam/` или самом workflow. Для ручного запуска выберите **Actions →
+Build Windows onedir → Run workflow** и нужную ветку (для появления кнопки
+workflow должен быть доступен в default branch).
+В успешном запуске скачайте artifact **KPI_KAM-windows-x64-onedir**.
+ZIP содержит `KPI_KAM.exe` и `_internal` в корне: извлеките все содержимое
+в одну папку, например `KPI_KAM`, и запустите exe. Второй artifact,
+**KPI_KAM-windows-build-report**, содержит JSON-отчет проверки executable.
+Artifacts хранятся 14 дней; готовый дистрибутив можно хранить локально дольше.
+
+В Linux можно проверить общий spec и зависимости, но результат будет
+Linux executable, а не Windows-сборка. Из `kpi_kam`:
+
+```sh
+.venv/bin/python -m pip install -r requirements-build.txt
+.venv/bin/python -m PyInstaller --noconfirm --clean --distpath dist --workpath build/pyinstaller KPI_KAM.spec
+.venv/bin/python tools/smoke_frozen.py --executable dist/KPI_KAM/KPI_KAM \
+  --fixture "tests/fixtures/KPI Трофимов Дмитрий 2026.xlsm" \
+  --expected tests/fixtures/trofimov_expected.json --report build/packaging-smoke.json
+```
 
 ## Экраны GUI
 
@@ -255,14 +347,18 @@ result = calculate_kpi(
 * `app/utils/normalization.py` — нормализация, Decimal и формат денег.
 * `tests/` — бизнес-правила и regression fixture.
 * `resources/` — место для дополнительных ресурсов приложения.
+* `desktop_entry.py` — точка входа PyInstaller и диагностика собранного GUI.
+* `KPI_KAM.spec`, `build_windows.bat` — Windows onedir-сборка.
+* `tools/smoke_frozen.py` — запуск executable и проверка свежего отчета.
 
 ## Regression fixture и ограничения
 
 См. `tests/fixtures/README.md`. Workbook используется только в тестах.
 Тестовый XML-адаптер сохранён как независимый путь проверки. Тот же эталон
 проверяет production-импортёр и ImportSession; GUI-тесты проходят полный путь
-от проверки файла до расчета/истории на этой книге. Экспорт Excel и Windows
-упаковка остаются для следующих фаз. Логи CLI выводятся в stderr; GUI сохраняет
+от проверки файла до расчета/истории на этой книге. Экспорт Excel остается
+для следующей фазы. Windows onedir-сборка подготовлена через GitHub Actions.
+Логи CLI выводятся в stderr; GUI сохраняет
 вращаемый app.log рядом с базой данных, без названий клиентов.
 GUI проверен настоящими Qt-виджетами в Linux offscreen, включая event loop
 desktop entry point. Windows-native запуск/сборка в этой среде не выполнялись.

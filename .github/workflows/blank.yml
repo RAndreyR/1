@@ -1,4 +1,4 @@
-name: Calculation engine tests
+name: KPI KAM tests
 on:
   push:
   pull_request:
@@ -6,6 +6,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      XDG_CACHE_HOME: /tmp/kpi-kam-ci-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

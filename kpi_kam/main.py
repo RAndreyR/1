@@ -1,4 +1,4 @@
-"""Phase 2 CLI: inspect/import/map/calculate without a desktop GUI."""
+"""Desktop entry point with retained Phase 2 CLI commands."""
 import argparse
 from contextlib import ExitStack
 from decimal import Decimal
@@ -34,6 +34,9 @@ def _demo() -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='KPI KAM — импорт и расчет без GUI')
     commands = parser.add_subparsers(dest='command')
+    gui = commands.add_parser('gui', help='Открыть desktop-приложение')
+    gui.add_argument('--db',type=Path,help='Путь SQLite (по умолчанию папка данных приложения)')
+    commands.add_parser('demo',help='Демонстрация расчетного ядра')
     for name in ('check', 'calculate'):
         command = commands.add_parser(name)
         command.add_argument('file', type=Path)
@@ -80,7 +83,10 @@ def _apply_decisions(session: ImportSession, args: argparse.Namespace) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command is None:
+    if args.command is None or args.command == 'gui':
+        from app.ui.launcher import run_gui
+        return run_gui(getattr(args,'db',None))
+    if args.command == 'demo':
         _demo()
         return 0
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

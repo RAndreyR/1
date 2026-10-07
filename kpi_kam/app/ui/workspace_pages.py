@@ -41,7 +41,7 @@ class DataPage(QWidget):
 
 class MappingPage(DataPage):
     def __init__(self,window):
-        super().__init__('Сопоставление товаров',['Из файла продаж','Фасовка','Продукт прайса','Группа','Статус'],
+        super().__init__('Сопоставление товаров',['Из файла продаж','Фасовка','Продукт прайса','Группа','Статус','Фасовка прайса'],
             'Название и фасовка сопоставляются вместе. 200 мл — сиппинг; 500/1000 мл — реторты. Группа берется из внешнего прайса.')
         actions=QHBoxLayout();self.body.addLayout(actions)
         self.products=QComboBox();actions.addWidget(self.products,1)
@@ -69,7 +69,7 @@ class AdminPanel(QWidget):
         price=self.forms[0]
         self.price_info=QLabel();self.price_info.setWordWrap(True);price.addWidget(self.price_info)
         button('Импорт отдельного прайс-листа',window.choose_price,price)
-        self.price_grid=table(['Продукт','Группа','ЛПУ','Дистрибьютер']);price.addWidget(self.price_grid)
+        self.price_grid=table(['Продукт','Фасовка','Группа','ЛПУ','Дистрибьютер']);price.addWidget(self.price_grid)
         employee=self.forms[1]
         self.unknown=QLabel();self.unknown.setWordWrap(True);employee.addWidget(self.unknown)
         self.employees=QComboBox();employee.addWidget(self.employees)

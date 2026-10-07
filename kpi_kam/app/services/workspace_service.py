@@ -100,7 +100,7 @@ class WorkspaceService:
         if price is None or pid not in {p.id for p in price.products}:
             raise CalculationInputError('Выберите товар из активного внешнего прайса')
         product=next(p for p in price.products if p.id==pid)
-        if not packaging_compatible(raw,product.canonical_name):
+        if not packaging_compatible(raw,product.canonical_name,product.packaging):
             raise CalculationInputError('Фасовка из продаж не соответствует фасовке продукта прайса')
         matched,kind=ProductMatcher(price.products).match(raw)
         if kind=='exact' and matched.id!=pid:

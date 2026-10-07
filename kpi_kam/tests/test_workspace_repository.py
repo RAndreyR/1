@@ -17,7 +17,7 @@ def test_default_alias_profiles_and_restart(tmp_path):
         profile=repo.year_profile(employee.id,2026)
         assert profile.plans == Plans('1','2','3','4')
         assert profile.role == 'KAM'
-        assert repo.connection.execute('SELECT version FROM schema_version').fetchone()[0] == 1
+        assert repo.connection.execute('SELECT version FROM schema_version').fetchone()[0] == 2
 
 
 def test_admin_hash_and_session_permissions(tmp_path):

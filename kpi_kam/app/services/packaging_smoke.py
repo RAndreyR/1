@@ -135,9 +135,9 @@ def verify_workspace(directory,app):
     from app.services.admin_auth import DEFAULT_PASSWORD
     price_path=directory/'price.xlsx';sales_path=directory/'sales.xlsx'
     book=Workbook();sheet=book.active
-    sheet.append(['Продукт','Группа','Зеленая зона ЛПУ','Зеленая зона дистрибьюторов'])
-    sheet.append(['Синтетический товар 200 мл','ЭП','100','100'])
-    sheet.append(['Синтетический товар 500 мл','ЭП','200','200']);book.save(price_path);book.close()
+    sheet.append(['Продукт','Фасовка','Группа','Зеленая зона ЛПУ','Зеленая зона дистрибьюторов'])
+    sheet.append(['Синтетический товар','200 мл','ЭП','100','100'])
+    sheet.append(['Синтетический товар','500 мл','ЭП','200','200']);book.save(price_path);book.close()
 
     def sales(include_return):
         book=Workbook();book.remove(book.active)
@@ -164,6 +164,7 @@ def verify_workspace(directory,app):
         window.repository.save_price(*import_price(price_path))
         sales(False);window.repository.save_sales(import_sales(sales_path,2026))
         price=window.repository.price_version()
+        assert [p.packaging for p in price.products]==['200 мл','500 мл']
         flow.map_product('Синтетический товар',price.products[0].id,packaging='200 мл')
         flow.save_inputs(employee.id,2026,Plans('1000','1000','1000','1000'),
             calls_plans=('900','800','600','1000'),calls_facts=('840','0','0','0'))
@@ -203,5 +204,6 @@ def verify_workspace(directory,app):
         assert not reopened.workflow.is_admin
         assert reopened.repository.payments(employee.id,2026)[0].amount==Decimal('28050')
         assert reopened.repository.workspace_snapshot(snapshot.id).status=='paid/closed'
+        assert reopened.repository.price_version().products[0].packaging=='200 мл'
         assert reopened.calls_plan_inputs[0].text()=='900'
     finally:reopened.close()

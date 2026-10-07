@@ -4,7 +4,7 @@ from decimal import Decimal
 from app.models.domain import ZERO
 from app.models.events import ReturnAllocation
 from app.utils.normalization import CalculationInputError
-from app.utils.packaging import normalize_packaging,name_packaging
+from app.utils.packaging import normalize_packaging,name_packaging,product_mapping_key,packaging_compatible
 
 
 def allocate_returns(audits,returns,*,paid_quarters=(),previous=(),manual_links=None,year=2026):
@@ -42,9 +42,11 @@ def allocate_returns(audits,returns,*,paid_quarters=(),previous=(),manual_links=
         def same_packaging(source):
             original=normalize_packaging(source.event.packaging) or name_packaging(source.event.product_raw)
             returned=normalize_packaging(ret.packaging) or name_packaging(ret.product_raw)
-            if not original and source.audit.product:
-                original=name_packaging(source.audit.product.canonical_name)
-            return not returned or not original or original==returned
+            key=product_mapping_key(ret.product_raw,returned)
+            if not packaging_compatible(key,source.event.product_raw,original):
+                return False
+            product=source.audit.product
+            return product is None or packaging_compatible(key,product.canonical_name,product.packaging)
         if explicit and not same_packaging(sources[explicit]):
             raise CalculationInputError('Фасовка возврата и исходной отгрузки различается')
         candidates=[a for a in sources.values() if

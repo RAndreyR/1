@@ -52,10 +52,11 @@ def split_mapping_key(value):
     return value,''
 
 
-def packaging_compatible(raw_name,canonical_name):
+def packaging_compatible(raw_name,canonical_name,canonical_packaging=''):
     name,pack=split_mapping_key(raw_name or '')
     explicit=name_packaging(name)
-    target=name_packaging(canonical_name)
+    # Explicit price field is authoritative; old price versions retain their names.
+    target=normalize_packaging(canonical_packaging) or name_packaging(canonical_name)
     def compatible(left,right):
         if not left or not right:return True
         if left==right:return True

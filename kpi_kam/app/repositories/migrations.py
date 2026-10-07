@@ -3,7 +3,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION=1
+SCHEMA_VERSION=2
 
 
 def backup_database(path, label='backup'):
@@ -72,7 +72,13 @@ def migrate(connection):
                     connection.execute(f'ALTER TABLE calculations ADD COLUMN {name} {definition}')
             for statement in TABLES:
                 connection.execute(statement)
-            connection.execute('INSERT INTO schema_version VALUES (1,?,?)',(SCHEMA_VERSION,datetime.now(timezone.utc).isoformat()))
+            connection.execute('INSERT INTO schema_version VALUES (1,1,?)',(datetime.now(timezone.utc).isoformat(),))
+        current=version[0] if version else 1
+        if current<2:
+            # Adding a default leaves old immutable price rows and snapshots intact.
+            connection.execute("ALTER TABLE price_products ADD COLUMN packaging TEXT NOT NULL DEFAULT ''")
+            connection.execute('UPDATE schema_version SET version=2,migrated_at=? WHERE id=1',
+                               (datetime.now(timezone.utc).isoformat(),))
         connection.commit()
     except Exception:
         connection.rollback()

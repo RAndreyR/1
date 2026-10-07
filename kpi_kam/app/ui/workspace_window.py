@@ -15,7 +15,7 @@ from app.services.price_importer import import_price
 from app.services.sales_importer import import_sales,client_identity
 from app.services.workbook_reader import read_workbook
 from app.utils.input_values import nonnegative_number,percentage,percent_text,percent_input
-from app.utils.packaging import split_mapping_key,packaging_compatible
+from app.utils.packaging import split_mapping_key,packaging_compatible,name_packaging
 from app.ui.main_window import MainWindow,ERRORS
 from app.ui.common import page_layout,fill_table,money,number
 from app.ui.workspace_pages import DataPage,MappingPage,AdminPanel,ColumnMappingDialog,button
@@ -197,7 +197,8 @@ class WorkspaceWindow(MainWindow):
 
     def refresh_mappings(self):
         entries=self.workflow.product_mappings(self.employee.currentData(),self.year.value())
-        self.mappings.set_rows([[*split_mapping_key(raw),p.canonical_name if p else '',p.category if p else '',kind or 'Требует подтверждения'] for raw,p,kind in entries],[raw for raw,_,_ in entries])
+        self.mappings.set_rows([[*split_mapping_key(raw),p.canonical_name if p else '',p.category if p else '',kind or 'Требует подтверждения',
+            (p.packaging or name_packaging(p.canonical_name)) if p else ''] for raw,p,kind in entries],[raw for raw,_,_ in entries])
         self.refresh_mapping_products()
 
     def refresh_mapping_products(self):
@@ -206,8 +207,10 @@ class WorkspaceWindow(MainWindow):
         raw=self.mappings.selected_key()
         if price:
             for p in price.products:
-                if raw is None or packaging_compatible(raw,p.canonical_name):
-                    self.mappings.products.addItem(f'{p.canonical_name} · {p.category}',p.id)
+                if raw is None or packaging_compatible(raw,p.canonical_name,p.packaging):
+                    pack=p.packaging or name_packaging(p.canonical_name)
+                    label=f'{p.canonical_name} · {pack} · {p.category}' if pack else f'{p.canonical_name} · {p.category}'
+                    self.mappings.products.addItem(label,p.id)
 
     def choose_sales(self):
         path,_=QFileDialog.getOpenFileName(self,'Общий файл продаж','','Excel (*.xlsx *.xlsm)')
@@ -393,7 +396,7 @@ class WorkspaceWindow(MainWindow):
         self.admin.state.setText('Администратор' if active else 'Обычный пользователь')
         price=self.repository.price_version()
         self.admin.price_info.setText(self.price_label.text())
-        fill_table(self.admin.price_grid,[[p.canonical_name,p.category,number(p.price_lpu),number(p.price_distributor)] for p in price.products] if price else [])
+        fill_table(self.admin.price_grid,[[p.canonical_name,p.packaging or name_packaging(p.canonical_name),p.category,number(p.price_lpu),number(p.price_distributor)] for p in price.products] if price else [])
         self.reconcile_button.setEnabled(active)
 
     def admin_login(self):

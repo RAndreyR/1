@@ -61,7 +61,7 @@ def _decode(value: object) -> object:
         cls = TYPES[value['type']]
         expected={f.name for f in fields(cls)}
         # Additive fields in old persisted events/layouts have explicit defaults.
-        optional={'ShipmentEvent':{'packaging','legacy_line_key'},'ReturnEvent':{'packaging','legacy_line_key'},
+        optional={'Product':{'packaging'},'ShipmentEvent':{'packaging','legacy_line_key'},'ReturnEvent':{'packaging','legacy_line_key'},
                   'SheetLayout':{'packaging_unit'}}.get(value['type'],set())
         present=set(value['fields'])
         if present-expected or expected-present-optional:

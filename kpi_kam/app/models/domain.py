@@ -5,6 +5,7 @@ from typing import Mapping
 from types import MappingProxyType
 
 from app.utils.normalization import CalculationInputError, decimal_value, normalize_text
+from app.utils.packaging import normalize_packaging
 
 ZERO = Decimal('0')
 CATEGORIES = ('СБКС', 'ВМК', 'Latema', 'Novionta', 'ЭП')
@@ -47,6 +48,7 @@ class Product:
     category: str
     price_lpu: Decimal | None
     price_distributor: Decimal | None
+    packaging: str = ''
 
     def __post_init__(self) -> None:
         if not self.id or not normalize_text(self.canonical_name):
@@ -55,6 +57,7 @@ class Product:
         if category is None:
             raise CalculationInputError('Unknown price-list category')
         object.__setattr__(self, 'category', category)
+        object.__setattr__(self, 'packaging', normalize_packaging(self.packaging))
         _decimals(self, ('price_lpu', 'price_distributor'))
         if any(p is not None and p < ZERO for p in (self.price_lpu, self.price_distributor)):
             raise CalculationInputError('Thresholds cannot be negative')

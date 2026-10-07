@@ -15,6 +15,7 @@ from app.repositories.alias_repository import default_database_path
 from app.repositories.migrations import backup_before_migration, migrate, backup_database
 from app.services.snapshot_service import dump_object, load_object, dump_snapshot
 from app.utils.normalization import normalize_text, CalculationInputError, decimal_value
+from app.utils.packaging import product_mapping_key,name_packaging
 
 INITIAL_EMPLOYEES=('Пермякова Анна','Трофимов Дмитрий','Погорельцева Елена',
                    'Долгополова Мария','Гайдина Юлия','Петрова Елена','Филимонова Анна')
@@ -123,22 +124,31 @@ class WorkspaceRepository(ApplicationRepository):
             self.connection.execute('UPDATE role_templates SET policy_json=? WHERE role=?',(dump_object(policy),policy.role))
 
     def save_price(self,data,products):
+        products=tuple(products)
+        from app.services.product_matcher import ProductMatcher
+        ProductMatcher(products)
         timestamp=now()
         with self.connection:
+            previous_price=self.price_version()
+            previous_products=previous_price.products if previous_price else tuple(Product(*r) for r in
+                self.connection.execute('SELECT id,canonical_name,category,price_lpu,price_distributor FROM products'))
+            old={normalize_text(product_mapping_key(p.canonical_name,p.packaging or name_packaging(p.canonical_name))):p.id
+                 for p in previous_products}
             vid=self.connection.execute('INSERT INTO price_list_versions(source_file,source_hash,imported_at) VALUES (?,?,?)',
                                         (data.source_file,data.source_hash,timestamp)).lastrowid
-            self.connection.executemany('INSERT INTO price_products VALUES (?,?,?,?,?,?)',
+            self.connection.executemany('''INSERT INTO price_products
+                (version_id,product_id,canonical_name,category,threshold_lpu,threshold_distributor,packaging)
+                VALUES (?,?,?,?,?,?,?)''',
                 [(vid,p.id,p.canonical_name,p.category,str(p.price_lpu) if p.price_lpu is not None else None,
-                  str(p.price_distributor) if p.price_distributor is not None else None) for p in products])
-            # Preserve aliases on normalized exact canonical-name identity changes.
-            old={normalize_text(name):pid for pid,name in self.connection.execute('SELECT id,canonical_name FROM products')}
+                  str(p.price_distributor) if p.price_distributor is not None else None,p.packaging) for p in products])
+            # An alias can move only to the same canonical name and package.
             self.connection.execute('UPDATE products SET active=0')
             for p in products:
                 self.connection.execute('''INSERT INTO products VALUES (?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET
                     canonical_name=excluded.canonical_name,category=excluded.category,price_lpu=excluded.price_lpu,
                     price_distributor=excluded.price_distributor,active=1,import_id=excluded.import_id''',
                     (p.id,p.canonical_name,p.category,str(p.price_lpu),str(p.price_distributor),str(vid)))
-                previous=old.get(normalize_text(p.canonical_name))
+                previous=old.get(normalize_text(product_mapping_key(p.canonical_name,p.packaging or name_packaging(p.canonical_name))))
                 if previous and previous!=p.id:
                     self.connection.execute('UPDATE product_aliases SET product_id=? WHERE product_id=?',(p.id,previous))
         return PriceVersion(vid,data.source_file,data.source_hash,timestamp,tuple(products))
@@ -148,7 +158,7 @@ class WorkspaceRepository(ApplicationRepository):
             ('ORDER BY id DESC LIMIT 1' if version_id is None else 'WHERE id=?'),() if version_id is None else (version_id,)).fetchone()
         if not row:
             return None
-        products=tuple(Product(*r) for r in self.connection.execute('SELECT product_id,canonical_name,category,threshold_lpu,threshold_distributor FROM price_products WHERE version_id=? ORDER BY rowid',(row[0],)))
+        products=tuple(Product(*r) for r in self.connection.execute('SELECT product_id,canonical_name,category,threshold_lpu,threshold_distributor,packaging FROM price_products WHERE version_id=? ORDER BY rowid',(row[0],)))
         return PriceVersion(*row,products)
 
     def save_sales(self,imported):

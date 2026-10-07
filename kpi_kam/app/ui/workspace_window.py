@@ -159,17 +159,38 @@ class WorkspaceWindow(MainWindow):
         finally:self._refreshing=False
 
     def refresh_sources(self):
-        price=self.repository.price_version();active=self.repository.latest_sales(self.year.value())
+        year=self.year.value();price=self.repository.price_version();active=self.repository.latest_sales(year)
         self.price_label.setText(f'Активный прайс: v{price.id} · {Path(price.source_file).name} · {price.imported_at}' if price else 'Внешний прайс еще не импортирован администратором')
         imported=active[1] if active else None
-        self.source_label.setText(f'Продажи: {Path(imported.source_file).name} · отгрузок {len(imported.shipments)} · возвратов {len(imported.returns)} · исключено «тендер»: {imported.excluded_tender_rows}' if imported else 'Общий файл продаж еще не импортирован для этого года')
+        pending=self.pending_columns[0] if self.pending_columns and self.pending_columns[0].year==year else None
+        source_text=(f'Продажи: {Path(imported.source_file).name} · {year} · отгрузок {len(imported.shipments)} · возвратов {len(imported.returns)} · исключено «тендер»: {imported.excluded_tender_rows}'
+                     if imported else f'Общий файл продаж еще не импортирован для {year} года')
+        if pending:
+            source_text=(f'Импорт «{Path(pending.source_file).name}» за {year} год не завершен. '
+                         f'Не найдены заголовки: {", ".join(pending.column_requests)}. Требуется подтверждение колонок.')
+            if imported:source_text+=f'\nПоследний сохраненный файл: {Path(imported.source_file).name}.'
+        elif self._worker is not None and getattr(self._worker,'kind',None)=='sales' and self._worker.year==year:
+            source_text=f'Чтение файла «{Path(self._worker.path).name}» за {year} год…'
+        self.source_label.setText(source_text)
         unknown=self.workflow.unknown_managers(imported) if imported else ()
         self.admin.unknown.setText('Неизвестные менеджеры: '+', '.join(unknown) if unknown else 'Все менеджеры сопоставлены.')
-        self.readiness.setText('Для расчета нужны внешний прайс, продажи, должность и четыре плана. Неизвестные менеджеры и товары требуют явного решения.'+ (' Требуют сопоставления: '+', '.join(unknown) if unknown else ''))
-        if self.pending_columns:
-            self.readiness.setText('Новый файл требует подтверждения структуры: '+', '.join(self.pending_columns[0].column_requests)+'. До подтверждения он не сохранен.')
+        if pending:
+            action='' if self.workflow.is_admin else 'Войдите как администратор. '
+            self.readiness.setText(action+'Нажмите «Подтвердить структуру листа (администратор)», выберите колонки по предпросмотру и подтвердите. До этого новый файл не сохранен.')
+        else:
+            missing=[];eid=self.employee.currentData()
+            if not price:missing.append('импортировать внешний прайс (администратор)')
+            if not imported:missing.append(f'импортировать общий файл продаж за {year} год')
+            if not self.repository.year_role(eid,year):missing.append('задать должность на год (администратор)')
+            if not self.repository.year_profile(eid,year):missing.append('ввести планы Q1–Q4')
+            if unknown:missing.append('сопоставить менеджеров: '+', '.join(unknown))
+            if any(product is None and kind not in ('left_unmatched','historical') for _,product,kind in self.workflow.product_mappings(eid,year)):
+                missing.append('подтвердить сопоставления товаров')
+            self.readiness.setText((f'Продажи сохранены для {year} года. ' if imported else '')+
+                ('Осталось: '+ '; '.join(missing)+'.' if missing else 'Данные готовы к расчету.'))
         self.refresh_mappings()
-        self.columns_button.setVisible(self.pending_columns is not None)
+        self.columns_button.setVisible(pending is not None)
+        self.calculate_button.setEnabled(self._worker is None and pending is None)
 
     def refresh_mappings(self):
         entries=self.workflow.product_mappings(self.employee.currentData(),self.year.value())
@@ -187,10 +208,10 @@ class WorkspaceWindow(MainWindow):
         path,_=QFileDialog.getOpenFileName(self,'Отдельный прайс-лист','','Excel (*.xlsx *.xlsm)')
         if path:self.begin_price_import(path)
 
-    def begin_sales_import(self,path,mappings=None):
+    def begin_sales_import(self,path,mappings=None,*,year=None):
         def start():
             if mappings:self.workflow.auth.require()
-            self._start_parse(path,'sales',mappings)
+            self._start_parse(path,'sales',mappings,year=year)
         self.safe(start)
 
     def begin_price_import(self,path):
@@ -198,13 +219,16 @@ class WorkspaceWindow(MainWindow):
             self.workflow.auth.require();self._start_parse(path,'price')
         self.safe(start)
 
-    def _start_parse(self,path,kind,mappings=None):
+    def _start_parse(self,path,kind,mappings=None,*,year=None):
         if self._worker is not None:return
         self.sales_button.setEnabled(False);self.calculate_button.setEnabled(False)
         self.statusBar().showMessage('Чтение Excel…')
-        worker=WorkbookWorker(path,self.year.value(),kind,mappings,self);self._worker=worker
+        if kind=='sales' and not mappings:
+            self.pending_columns=None;self._column_mappings={}
+        worker=WorkbookWorker(path,self.year.value() if year is None else year,kind,mappings,self);self._worker=worker
         worker.ready.connect(self.accept_parsed);worker.failed.connect(self.report_error)
-        worker.finished.connect(self.parse_finished);worker.finished.connect(worker.deleteLater);worker.start()
+        worker.finished.connect(self.parse_finished);worker.finished.connect(worker.deleteLater)
+        self.refresh_sources();worker.start()
 
     def accept_parsed(self,payload):
         if self._closing:return
@@ -217,7 +241,8 @@ class WorkspaceWindow(MainWindow):
                 if data.column_requests:
                     self.pending_columns=(data,preview);self._column_mappings={layout.name:layout for layout in data.layouts}
                 elif data.errors:
-                    raise ValueError('\n'.join(f'{i.sheet or ""} {i.source_row or ""}: {i.message}' for i in data.errors[:20]))
+                    raise ValueError(f'Импорт «{Path(data.source_file).name}» за {data.year} год не завершен:\n'+
+                                     '\n'.join(f'{i.sheet or ""} {i.source_row or ""}: {i.message}' for i in data.errors[:20]))
                 else:
                     self.repository.save_sales(data);self.pending_columns=None
                     self.year.setValue(data.year)
@@ -226,10 +251,15 @@ class WorkspaceWindow(MainWindow):
         self.safe(accept)
 
     def parse_finished(self):
+        worker=self._worker
         self._worker=None
         if not self._closing:
-            self.sales_button.setEnabled(True);self.calculate_button.setEnabled(True)
-            if not self.error_label.isVisible():self.statusBar().showMessage('Файл проверен',5000)
+            self.sales_button.setEnabled(True);self.refresh_sources()
+            if not self.error_label.isVisible():
+                if worker.kind=='sales' and self.pending_columns:
+                    self.statusBar().showMessage('Импорт не завершен: подтвердите структуру листа.')
+                else:
+                    self.statusBar().showMessage('Продажи сохранены' if worker.kind=='sales' else 'Прайс импортирован',5000)
 
     def resolve_columns(self):
         def resolve():
@@ -241,7 +271,7 @@ class WorkspaceWindow(MainWindow):
                 dialog=ColumnMappingDialog(name,preview.sheets[name],self)
                 if dialog.exec()!=QDialog.DialogCode.Accepted:return
                 mappings[name]=dialog.layout_value()
-            self.begin_sales_import(imported.source_file,mappings)
+            self.begin_sales_import(imported.source_file,mappings,year=imported.year)
         self.safe(resolve)
 
     def apply_product_mapping(self):
@@ -264,11 +294,14 @@ class WorkspaceWindow(MainWindow):
             calls_facts=tuple(nonnegative_number(edit.text()) for edit in self.call_inputs))
 
     def save_workspace_inputs(self):
-        self.safe(self._save_inputs)
+        self.safe(lambda:(self._save_inputs(),self.refresh_sources()))
 
     def calculate_workspace(self):
         def calculate():
+            if self.pending_columns and self.pending_columns[0].year==self.year.value():
+                raise ValueError('Импорт продаж не завершен. Сначала подтвердите структуру листа.')
             self._save_inputs()
+            self.refresh_sources()
             saved=self.workflow.calculate(self.employee.currentData(),self.year.value())
             self.display_workspace(saved);self.refresh_history()
             history=self.repository.workspace_history(self.employee.currentData(),self.year.value())
@@ -356,10 +389,10 @@ class WorkspaceWindow(MainWindow):
         password=self.admin.password.text();self.admin.password.clear()
         if not self.workflow.login_admin(password):self.report_error('Неверный пароль администратора')
         else:self._clear_error()
-        self.refresh_admin()
+        self.refresh_admin();self.refresh_sources()
 
     def admin_logout(self):
-        self.workflow.logout_admin();self.refresh_admin()
+        self.workflow.logout_admin();self.refresh_admin();self.refresh_sources()
 
     def admin_employee_selected(self,*_):
         eid=self.admin.employees.currentData()

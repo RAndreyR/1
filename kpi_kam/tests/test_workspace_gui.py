@@ -107,6 +107,11 @@ def test_admin_confirms_missing_headers_with_preview(desktop,tmp_path,monkeypatc
     path=sales_book(tmp_path/'missing.xlsx',missing_headers=True)
     desktop.begin_sales_import(str(path));wait_import(desktop)
     assert desktop.pending_columns is not None
+    assert 'missing.xlsx' in desktop.source_label.text()
+    assert 'не завершен' in desktop.source_label.text()
+    assert 'контракты ЭП' in desktop.source_label.text()
+    assert not desktop.calculate_button.isEnabled()
+    assert 'не импортирован' not in desktop.source_label.text()
     before=desktop.repository.latest_sales(2026)[0]
     def confirmed(dialog):
         assert dialog.columns['manager'].itemText(8).startswith('H:')
@@ -115,10 +120,15 @@ def test_admin_confirms_missing_headers_with_preview(desktop,tmp_path,monkeypatc
             dialog.columns[field].setCurrentIndex(dialog.columns[field].findData(col))
         return QDialog.DialogCode.Accepted
     monkeypatch.setattr(ColumnMappingDialog,'exec',confirmed)
+    desktop.year.setValue(2027)
     desktop.resolve_columns();wait_import(desktop)
     assert desktop.pending_columns is None
     assert desktop.repository.latest_sales(2026)[0]!=before
+    assert desktop.repository.latest_sales(2027) is None
+    assert desktop.year.value()==2026
     assert len(desktop.repository.latest_sales(2026)[1].shipments)==1
+    assert 'Продажи сохранены для 2026' in desktop.readiness.text()
+    assert desktop.calculate_button.isEnabled()
 
 
 def test_admin_password_change_and_unknown_manager_mapping(desktop,tmp_path):
@@ -212,3 +222,38 @@ def test_role_editor_restores_employee_year_roles_after_restart(desktop,tmp_path
         assert reopened.admin.role.currentData()=='KAM'
         assert not reopened.workflow.is_admin
     finally:reopened.close()
+
+
+def test_ordinary_import_saved_status_and_year_switch(desktop,tmp_path):
+    desktop.year.setValue(2026)
+    path=sales_book(tmp_path/'ordinary-sales.xlsx')
+    desktop.begin_sales_import(str(path));wait_import(desktop)
+    assert desktop.repository.latest_sales(2026) is not None
+    assert 'ordinary-sales.xlsx' in desktop.source_label.text()
+    assert 'Продажи сохранены для 2026' in desktop.readiness.text()
+    assert 'продажи' not in desktop.readiness.text().split('Осталось:')[-1].casefold()
+    desktop.year.setValue(2027)
+    assert desktop.repository.latest_sales(2027) is None
+    assert '2027' in desktop.source_label.text()
+    desktop.year.setValue(2026)
+    assert 'ordinary-sales.xlsx' in desktop.source_label.text()
+    assert 'Продажи сохранены для 2026' in desktop.readiness.text()
+
+
+def test_unconfirmed_headers_show_file_and_admin_action_without_saving(desktop,tmp_path):
+    desktop.year.setValue(2026)
+    path=sales_book(tmp_path/'needs-columns.xlsx',missing_headers=True)
+    desktop.begin_sales_import(str(path));wait_import(desktop)
+    assert desktop.repository.latest_sales(2026) is None
+    assert 'needs-columns.xlsx' in desktop.source_label.text()
+    assert 'контракты ЭП' in desktop.source_label.text()
+    assert 'Войдите' in desktop.readiness.text()
+    assert desktop.columns_button.isVisible()
+    assert not desktop.calculate_button.isEnabled()
+    # Confirmation belongs to the year captured when importing, not a later UI year.
+    desktop.year.setValue(2027)
+    assert not desktop.columns_button.isVisible()
+    assert '2027' in desktop.source_label.text()
+    desktop.year.setValue(2026)
+    assert desktop.columns_button.isVisible()
+    assert 'needs-columns.xlsx' in desktop.source_label.text()

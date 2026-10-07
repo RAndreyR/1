@@ -3,9 +3,9 @@ import os
 from decimal import Decimal
 import pytest
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
-from PySide6.QtCore import QElapsedTimer
+from PySide6.QtCore import QElapsedTimer,Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication,QPushButton
 from app.ui.workspace_window import WorkspaceWindow
 from tests.event_helpers import sales_book, price_book
 
@@ -136,3 +136,79 @@ def test_admin_password_change_and_unknown_manager_mapping(desktop,tmp_path):
     desktop.admin.password.setText('Changed_password_2026');desktop.admin.login.click()
     assert desktop.workflow.is_admin
     assert not desktop.admin.new_password.text()
+
+
+def role_editor(window):
+    window.navigate(13)
+    window.admin.password.setText('Innovanta_20102026')
+    window.admin.login.click()
+    window.admin.tabs.setCurrentIndex(1)
+    return next(button for button in window.admin.findChildren(QPushButton)
+                if button.text()=='Задать должность на год')
+
+
+def test_employee_switch_loads_own_saved_role_without_changing_other_employee(desktop):
+    save_button=role_editor(desktop)
+    gaidina=desktop.repository.resolve_employee('Гайдина')
+    trofimov=desktop.repository.resolve_employee('Трофимов')
+    desktop.admin.year.setValue(2026)
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(gaidina.id))
+    desktop.admin.role.setCurrentIndex(desktop.admin.role.findData('SUPPORT'))
+    QTest.mouseClick(save_button,Qt.MouseButton.LeftButton)
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(trofimov.id))
+    desktop.admin.role.setCurrentIndex(desktop.admin.role.findData('KAM'))
+    QTest.mouseClick(save_button,Qt.MouseButton.LeftButton)
+    assert desktop.repository.year_role(gaidina.id,2026)=='SUPPORT'
+    assert desktop.repository.year_role(trofimov.id,2026)=='KAM'
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(gaidina.id))
+    assert desktop.admin.role.currentData()=='SUPPORT'
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(trofimov.id))
+    assert desktop.admin.role.currentData()=='KAM'
+    # Selecting a value without pressing Save must not update either employee.
+    desktop.admin.role.setCurrentIndex(desktop.admin.role.findData('SUPPORT'))
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(gaidina.id))
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(trofimov.id))
+    assert desktop.admin.role.currentData()=='KAM'
+    assert desktop.repository.year_role(gaidina.id,2026)=='SUPPORT'
+    assert desktop.repository.year_role(trofimov.id,2026)=='KAM'
+
+
+def test_year_switch_loads_own_role_and_unassigned_year_stays_unassigned(desktop):
+    save_button=role_editor(desktop)
+    employee=desktop.repository.resolve_employee('Гайдина')
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(employee.id))
+    for year,role in ((2026,'SUPPORT'),(2027,'KAM')):
+        desktop.admin.year.setValue(year)
+        desktop.admin.role.setCurrentIndex(desktop.admin.role.findData(role))
+        QTest.mouseClick(save_button,Qt.MouseButton.LeftButton)
+    desktop.admin.year.setValue(2026)
+    assert desktop.admin.role.currentData()=='SUPPORT'
+    desktop.admin.year.setValue(2027)
+    assert desktop.admin.role.currentData()=='KAM'
+    desktop.admin.year.setValue(2028)
+    assert desktop.admin.role.currentData() is None
+    assert not save_button.isEnabled()
+    assert desktop.repository.year_role(employee.id,2028) is None
+
+
+def test_role_editor_restores_employee_year_roles_after_restart(desktop,tmp_path):
+    save_button=role_editor(desktop)
+    employee=desktop.repository.resolve_employee('Гайдина')
+    other=desktop.repository.resolve_employee('Трофимов')
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(employee.id))
+    desktop.admin.role.setCurrentIndex(desktop.admin.role.findData('SUPPORT'))
+    QTest.mouseClick(save_button,Qt.MouseButton.LeftButton)
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findData(other.id))
+    desktop.admin.role.setCurrentIndex(desktop.admin.role.findData('KAM'))
+    QTest.mouseClick(save_button,Qt.MouseButton.LeftButton)
+    desktop.close()
+    reopened=WorkspaceWindow(tmp_path/'desktop.db')
+    try:
+        # Role assignment must be readable even before mandatory plans are entered.
+        assert reopened.repository.year_profile(employee.id,2026) is None
+        reopened.admin.employees.setCurrentIndex(reopened.admin.employees.findData(employee.id))
+        assert reopened.admin.role.currentData()=='SUPPORT'
+        reopened.admin.employees.setCurrentIndex(reopened.admin.employees.findData(other.id))
+        assert reopened.admin.role.currentData()=='KAM'
+        assert not reopened.workflow.is_admin
+    finally:reopened.close()

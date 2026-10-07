@@ -3,7 +3,7 @@ from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
 import sqlite3
-from PySide6.QtCore import QThread,Signal
+from PySide6.QtCore import QThread,Signal,QSignalBlocker
 from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,
     QLineEdit,QComboBox,QSpinBox,QPushButton,QFileDialog,QMessageBox,QInputDialog,
     QGroupBox,QScrollArea,QDialog)
@@ -365,6 +365,30 @@ class WorkspaceWindow(MainWindow):
         eid=self.admin.employees.currentData()
         employee=next((e for e in self.repository.employees(True) if e.id==eid),None)
         if employee:self.admin.full_name.setText(employee.name);self.admin.active.setChecked(employee.active)
+        self.load_employee_role()
+
+    def load_employee_role(self,*_):
+        """Restore the role of the selected Employee + Year, including no role."""
+        eid=self.admin.employees.currentData()
+        role=self.repository.year_role(eid,self.admin.year.value()) if eid is not None else None
+        with QSignalBlocker(self.admin.role):
+            self.admin.role.setCurrentIndex(self.admin.role.findData(role))
+        self.employee_role_edited()
+
+    def employee_role_edited(self,*_):
+        eid=self.admin.employees.currentData();year=self.admin.year.value()
+        selected=self.admin.role.currentData()
+        stored=self.repository.year_role(eid,year) if eid is not None else None
+        self.admin.save_role_button.setEnabled(eid is not None and selected is not None)
+        if eid is None:
+            message='Выберите сотрудника.'
+        elif selected!=stored:
+            message='Изменения не сохранены. Нажмите «Задать должность на год».'
+        elif stored is None:
+            message=f'Должность на {year} год не задана. Выберите должность и сохраните.'
+        else:
+            message=f'Сохранено: {self.admin.employees.currentText()} · {year} · {self.admin.role.currentText()}.'
+        self.admin.role_feedback.setText(message)
 
     def add_employee(self):
         def add():
@@ -380,7 +404,17 @@ class WorkspaceWindow(MainWindow):
         self.safe(lambda:(self.workflow.map_employee(self.admin.alias.text(),self.admin.employees.currentData()),self.refresh_sources()))
 
     def save_employee_role(self):
-        self.safe(lambda:(self.workflow.set_role(self.admin.employees.currentData(),self.admin.year.value(),self.admin.role.currentData()),self.refresh_workspace()))
+        def save():
+            eid=self.admin.employees.currentData();year=self.admin.year.value()
+            role=self.admin.role.currentData()
+            if eid is None or role is None:
+                raise ValueError('Выберите сотрудника и должность')
+            self.workflow.set_role(eid,year,role)
+            self.load_employee_role()
+            if self.employee.currentData()==eid and self.year.value()==year:
+                self.refresh_workspace()
+            self.statusBar().showMessage(self.admin.role_feedback.text(),5000)
+        self.safe(save)
 
     def load_policy_fields(self,*_):
         policy=self.repository.role_policy(self.admin.policy_role.currentText())

@@ -1,0 +1,138 @@
+"""The actual desktop flow, including permissions and durable payments."""
+import os
+from decimal import Decimal
+import pytest
+os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
+from PySide6.QtCore import QElapsedTimer
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+from app.ui.workspace_window import WorkspaceWindow
+from tests.event_helpers import sales_book, price_book
+
+
+@pytest.fixture
+def desktop(tmp_path):
+    app=QApplication.instance() or QApplication([])
+    window=WorkspaceWindow(tmp_path/'desktop.db')
+    window.show();app.processEvents()
+    yield window
+    window.close();app.processEvents()
+
+
+def wait_import(window):
+    timer=QElapsedTimer();timer.start()
+    while window._worker is not None and timer.elapsed()<5000:
+        QTest.qWait(10)
+    assert window._worker is None
+    assert not window.error_label.isVisible(),window.error_label.text()
+
+
+def prepare(window,tmp_path,role='KAM',raw='Товар'):
+    window.admin.password.setText('Innovanta_20102026');window.admin.login.click()
+    assert window.workflow.is_admin
+    employee=window.repository.resolve_employee('Трофимов')
+    window.workflow.set_role(employee.id,2026,role)
+    window.begin_price_import(str(price_book(tmp_path/'price.xlsx')));wait_import(window)
+    window.employee.setCurrentIndex(window.employee.findData(employee.id))
+    window.year.setValue(2026)
+    window.refresh_workspace()
+    for edit in window.plan_inputs: edit.setText('1000')
+    window.begin_sales_import(str(sales_book(tmp_path/'sales.xlsx',raw=raw)));wait_import(window)
+    return employee
+
+
+def test_default_window_admin_import_calculation_payment_and_restart(desktop,tmp_path):
+    assert desktop.navigation.item(6).isHidden()
+    assert not desktop.admin.tabs.isEnabled()
+    assert desktop.employee.findText('Филимонова Анна')>=0
+    employee=prepare(desktop,tmp_path)
+    desktop.calculate_button.click()
+    assert desktop.workspace_saved is not None,desktop.error_label.text()
+    first=desktop.workspace_saved
+    assert first.calculation.quarters[0].payable==50
+    assert desktop.shipments.grid.rowCount()==1
+    assert desktop.premiums.grid.item(0,2).text()=='1 000,00 ₽'
+    desktop.confirm_payment(1,Decimal('40'))
+    assert desktop.repository.payments(employee.id,2026)[0].amount==40
+    desktop.admin.logout.click()
+    assert not desktop.workflow.is_admin
+    desktop.close()
+    reopened=WorkspaceWindow(tmp_path/'desktop.db')
+    try:
+        assert not reopened.workflow.is_admin
+        assert reopened.employee.currentData()==employee.id
+        assert reopened.plan_inputs[0].text()=='1000'
+        assert reopened.workspace_saved.status=='paid/closed'
+        assert reopened.workspace_saved.price.products[0].category=='ВМК'
+    finally: reopened.close()
+
+
+def test_product_mapping_requires_explicit_choice_and_uses_calls_engine(desktop,tmp_path):
+    prepare(desktop,tmp_path,role='SUPPORT',raw='Неизвестное название')
+    desktop.call_inputs[0].setText('700')
+    desktop.calculate_button.click()
+    assert desktop.workspace_saved is None
+    assert 'сопоставления' in desktop.error_label.text()
+    desktop.mappings.grid.selectRow(0)
+    desktop.mappings.products.setCurrentIndex(1)
+    desktop.mappings.apply.click()
+    desktop.calculate_button.click()
+    assert desktop.workspace_saved.calculation.quarters[0].calls_bonus==28000
+    assert desktop.workspace_saved.calculation.quarters[0].payable==28050
+    desktop.open_workspace_history(desktop.workspace_saved.id)
+    assert desktop.mappings.grid.item(0,3).text()=='alias'
+
+
+def test_returns_screen_and_guard_against_ordinary_price_import(desktop,tmp_path):
+    employee=prepare(desktop,tmp_path)
+    desktop.calculate_button.click();desktop.confirm_payment(1)
+    desktop.begin_sales_import(str(sales_book(tmp_path/'updated.xlsx',returns={7:('2','200')})));wait_import(desktop)
+    desktop.calculate_button.click()
+    assert desktop.returns.grid.rowCount()==1
+    assert desktop.workspace_saved.calculation.quarters[2].actual==-200
+    assert desktop.workspace_saved.calculation.quarters[2].clawback==10
+    desktop.admin.logout.click()
+    before=desktop.repository.price_version().id
+    desktop.begin_price_import(str(tmp_path/'price.xlsx'))
+    assert desktop._worker is None
+    assert desktop.repository.price_version().id==before
+    assert 'администратора' in desktop.error_label.text()
+
+
+def test_admin_confirms_missing_headers_with_preview(desktop,tmp_path,monkeypatch):
+    from app.ui.workspace_pages import ColumnMappingDialog
+    from app.services.sales_importer import FIELDS
+    from PySide6.QtWidgets import QDialog
+    prepare(desktop,tmp_path)
+    path=sales_book(tmp_path/'missing.xlsx',missing_headers=True)
+    desktop.begin_sales_import(str(path));wait_import(desktop)
+    assert desktop.pending_columns is not None
+    before=desktop.repository.latest_sales(2026)[0]
+    def confirmed(dialog):
+        assert dialog.columns['manager'].itemText(8).startswith('H:')
+        dialog.header.setValue(6)
+        for col,field in enumerate(reversed(list(FIELDS)),2):
+            dialog.columns[field].setCurrentIndex(dialog.columns[field].findData(col))
+        return QDialog.DialogCode.Accepted
+    monkeypatch.setattr(ColumnMappingDialog,'exec',confirmed)
+    desktop.resolve_columns();wait_import(desktop)
+    assert desktop.pending_columns is None
+    assert desktop.repository.latest_sales(2026)[0]!=before
+    assert len(desktop.repository.latest_sales(2026)[1].shipments)==1
+
+
+def test_admin_password_change_and_unknown_manager_mapping(desktop,tmp_path):
+    prepare(desktop,tmp_path)
+    desktop.begin_sales_import(str(sales_book(tmp_path/'unknown.xlsx',manager='Бабенкова')));wait_import(desktop)
+    assert 'Бабенкова' in desktop.admin.unknown.text()
+    desktop.admin.alias.setText('Бабенкова')
+    desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findText('Трофимов Дмитрий'))
+    desktop.map_employee()
+    assert desktop.workflow.unknown_managers(desktop.repository.latest_sales(2026)[1])==()
+    desktop.admin.old_password.setText('Innovanta_20102026')
+    desktop.admin.new_password.setText('Changed_password_2026')
+    desktop.admin.repeat_password.setText('Changed_password_2026')
+    desktop.change_admin_password();desktop.admin.logout.click()
+    desktop.admin.password.setText('Changed_password_2026');desktop.admin.login.click()
+    assert desktop.workflow.is_admin
+    assert not desktop.admin.new_password.text()

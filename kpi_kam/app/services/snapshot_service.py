@@ -11,6 +11,25 @@ from app.utils.normalization import decimal_value
 
 TYPES = {cls.__name__: cls for cls in (AuditRow, CalculationResult, Plans, PremiumBlock,
                                       Product, QuarterResult, Rules, Shipment, ProductMapping)}
+from app.models.events import (ShipmentEvent, ReturnEvent, Employee, YearProfile, RolePolicy,
+                              PriceVersion, SalesImport, EventAudit, ReturnAllocation,
+                              PeriodSummary, EventCalculation, WorkspaceSnapshot, PaymentRecord)
+from app.models.events import ReturnReview
+from app.models.import_data import SheetLayout, ValidationIssue
+TYPES.update({cls.__name__:cls for cls in (ShipmentEvent,ReturnEvent,Employee,YearProfile,
+    RolePolicy,PriceVersion,SalesImport,EventAudit,ReturnAllocation,PeriodSummary,
+    EventCalculation,WorkspaceSnapshot,PaymentRecord,SheetLayout,ValidationIssue,ReturnReview)})
+
+
+def dump_object(value):
+    return json.dumps({'version':2,'value':_encode(value)},ensure_ascii=False,separators=(',',':'))
+
+
+def load_object(payload):
+    data=json.loads(payload)
+    if not isinstance(data,dict) or set(data)!={'version','value'} or type(data['version']) is not int or data['version']!=2:
+        raise ValueError('Неподдерживаемая версия снимка событий')
+    return _decode(data['value'])
 
 
 def _encode(value: object) -> object:

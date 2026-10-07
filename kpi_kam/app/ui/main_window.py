@@ -43,9 +43,11 @@ class ImportWorker(QThread):
 
 
 class MainWindow(QMainWindow):
+    repository_class = ApplicationRepository
+
     def __init__(self, database_path: str | Path | None = None) -> None:
         super().__init__()
-        self.repository = ApplicationRepository(database_path)
+        self.repository = self.repository_class(database_path)
         self.service = ApplicationService(self.repository)
         self.saved: SavedCalculation | None = None
         self._worker: ImportWorker | None = None

@@ -37,6 +37,8 @@ def test_packaging_diagnostic_runs_real_gui_and_regression(tmp_path):
     assert result['included_count'] == 64
     assert result['annual_premium'] == '251283.3171100000090'
     assert 'SQLite history' in result['checks']
+    assert 'common sales and external price' in result['checks']
+    assert 'paid return clawback' in result['checks']
     assert list(directory.iterdir()) == [report]
 
 

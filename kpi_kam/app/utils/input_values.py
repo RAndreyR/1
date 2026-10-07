@@ -1,5 +1,5 @@
 """Localized decimal input; Qt spin boxes never handle money or percentages."""
-from decimal import Decimal, localcontext
+from decimal import Decimal, localcontext, ROUND_HALF_UP
 import re
 from app.utils.normalization import CalculationInputError, decimal_value
 
@@ -30,7 +30,8 @@ def percent_text(value: Decimal | None) -> str:
         return '—'
     with localcontext() as context:
         context.prec = 50
-        return f'{value * Decimal("100"):.2f}'.replace('.', ',') + '%'
+        rounded=(value*Decimal('100')).quantize(Decimal('0.1'),rounding=ROUND_HALF_UP)
+        return format(rounded,'f').replace('.', ',') + '%'
 
 
 def percent_input(value: Decimal) -> str:

@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 from PySide6.QtWidgets import QApplication, QMessageBox
 from app.repositories.alias_repository import default_database_path
-from app.ui.main_window import MainWindow
+from app.ui.workspace_window import WorkspaceWindow
 
 
 def run_gui(database_path: str | Path | None = None) -> int:
@@ -21,7 +21,7 @@ def run_gui(database_path: str | Path | None = None) -> int:
         handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s %(message)s'))
         logging.getLogger().addHandler(handler)
         logging.getLogger().setLevel(logging.INFO)
-        window = MainWindow(database_path)
+        window = WorkspaceWindow(database_path)
     except Exception:
         logging.exception('Application startup failed')
         if handler is not None:

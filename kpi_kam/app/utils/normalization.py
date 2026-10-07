@@ -8,7 +8,9 @@ class CalculationInputError(ValueError):
 
 
 def normalize_text(value: str | None) -> str:
-    return ' '.join((value or '').split()).casefold()
+    quotes = str.maketrans({'«': '"', '»': '"', '“': '"', '”': '"', '„': '"',
+                           '‘': "'", '’': "'"})
+    return ' '.join((value or '').translate(quotes).split()).casefold()
 
 
 def normalize_quarter(value: str | int | None) -> int | None:

@@ -21,6 +21,7 @@ class SheetLayout:
     name: str
     header_row: int
     columns: Mapping[str, int]  # Logical field -> 1-based column.
+    packaging_unit: str = ''  # Explicit unit for numeric cells with no unit/header.
 
     def __post_init__(self) -> None:
         object.__setattr__(self, 'columns', MappingProxyType(dict(self.columns)))

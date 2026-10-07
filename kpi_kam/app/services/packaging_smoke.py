@@ -109,11 +109,101 @@ def run_packaging_smoke(report_path: str, fixture_path: str, expected_path: str)
                 raise AssertionError('\n'.join(failures))
             if status['status'] != 'passed':
                 raise AssertionError('Packaging checks did not complete')
+            verify_workspace(Path(directory),app)
+            status['checks'].extend(['common sales and external price','KAM/SUPPORT policy',
+                                    'admin permissions','paid return clawback','XLSX export','workspace restart'])
         report.write_text(json.dumps(status,ensure_ascii=False,indent=2),encoding='utf-8')
         return 0
     except Exception:
         if window is not None:
             window.close()
+        status['status'] = 'failed'
         status['error'] = traceback.format_exc()
         report.write_text(json.dumps(status,ensure_ascii=False,indent=2),encoding='utf-8')
         return 1
+
+
+def verify_workspace(directory,app):
+    """Check new modules inside the frozen process using synthetic workbooks."""
+    from datetime import datetime
+    from openpyxl import Workbook,load_workbook
+    from app.models.domain import Plans
+    from app.ui.workspace_window import WorkspaceWindow
+    from app.services.sales_importer import FIELDS,SHEETS
+    from app.services.price_importer import import_price
+    from app.services.sales_importer import import_sales
+    from app.services.admin_auth import DEFAULT_PASSWORD
+    price_path=directory/'price.xlsx';sales_path=directory/'sales.xlsx'
+    book=Workbook();sheet=book.active
+    sheet.append(['Продукт','Фасовка','Группа','Зеленая зона ЛПУ','Зеленая зона дистрибьюторов'])
+    sheet.append(['Синтетический товар','200 мл','ЭП','100','100'])
+    sheet.append(['Синтетический товар','500 мл','ЭП','200','200']);book.save(price_path);book.close()
+
+    def sales(include_return):
+        book=Workbook();book.remove(book.active)
+        for i,name in enumerate(SHEETS):
+            sheet=book.create_sheet(name)
+            for col,key in enumerate(FIELDS,1):sheet.cell(6,col,FIELDS[key])
+            sheet.cell(5,10,datetime(2026,1,1));sheet.merge_cells('J5:K5')
+            sheet.cell(6,10,'количество');sheet.cell(6,11,'сумма')
+            sheet.cell(5,13,'Возврат июль');sheet.cell(5,14,'Возврат июль')
+            sheet.append(['ФО','Регион','Трофимов','ЛПУ','Дистрибьютер','ЮЛ','С-1','Синтетический товар','200 мл',
+                          '10' if i==0 else '0','1000' if i==0 else '0',None,
+                          '2' if include_return and i==0 else '0','200' if include_return and i==0 else '0'])
+        book.save(sales_path);book.close()
+
+    database=directory/'workspace.db';window=WorkspaceWindow(database)
+    try:
+        window.show();app.processEvents()
+        employee=window.repository.resolve_employee('Трофимов');flow=window.workflow
+        window.employee.setCurrentIndex(window.employee.findData(employee.id))
+        window.year.setValue(2026)
+        assert not flow.is_admin
+        assert flow.login_admin(DEFAULT_PASSWORD)
+        flow.set_role(employee.id,2026,'SUPPORT')
+        window.repository.save_price(*import_price(price_path))
+        sales(False);window.repository.save_sales(import_sales(sales_path,2026))
+        price=window.repository.price_version()
+        assert [p.packaging for p in price.products]==['200 мл','500 мл']
+        flow.map_product('Синтетический товар',price.products[0].id,packaging='200 мл')
+        flow.save_inputs(employee.id,2026,Plans('1000','1000','1000','1000'),
+            calls_plans=('900','800','600','1000'),calls_facts=('840','0','0','0'))
+        snapshot=flow.calculate(employee.id,2026)
+        assert snapshot.calculation.event_audit[0].event.packaging=='200 мл'
+        assert snapshot.calculation.event_audit[0].audit.product.id==price.products[0].id
+        assert snapshot.calculation.quarters[0].calls_bonus==Decimal('28000')
+        assert snapshot.calculation.quarters[0].payable==Decimal('28050')
+        flow.confirm_payment(snapshot.id,1)
+        sales(True);window.repository.save_sales(import_sales(sales_path,2026))
+        later=flow.calculate(employee.id,2026)
+        assert later.calculation.quarters[2].actual==Decimal('-200')
+        assert later.calculation.quarters[2].clawback==Decimal('10')
+        window.display_workspace(later)
+        assert window.returns.grid.rowCount()==1
+        flow.export_data(directory/'export.xlsx',2026,employee_id=employee.id)
+        exported=load_workbook(directory/'export.xlsx')
+        try:
+            assert 'Возвраты' in exported.sheetnames
+            headers={c.value:c.column for c in exported['Сводка'][1]}
+            amount=exported['Сводка'].cell(2,headers['payable'])
+            assert amount.data_type=='n' and amount.value==28050
+            assert amount.number_format=='[$-419]0.0'
+            achievement=exported['Сводка'].cell(2,headers['% выполнения'])
+            assert achievement.data_type=='n' and achievement.number_format=='[$-419]0.0%'
+        finally:exported.close()
+        window.refresh_workspace()
+        assert window.calls_plan_inputs[0].text()=='900'
+        assert window.calls_plan_inputs[0].isReadOnly()
+        window.mappings.grid.selectRow(0)
+        assert window.mappings.products.count()==2
+        assert '200 мл' in window.mappings.products.itemText(1)
+        assert not window.grab().isNull()
+    finally:window.close()
+    reopened=WorkspaceWindow(database)
+    try:
+        assert not reopened.workflow.is_admin
+        assert reopened.repository.payments(employee.id,2026)[0].amount==Decimal('28050')
+        assert reopened.repository.workspace_snapshot(snapshot.id).status=='paid/closed'
+        assert reopened.repository.price_version().products[0].packaging=='200 мл'
+        assert reopened.calls_plan_inputs[0].text()=='900'
+    finally:reopened.close()

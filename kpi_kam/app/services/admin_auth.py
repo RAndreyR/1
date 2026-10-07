@@ -4,6 +4,8 @@ import hmac
 import secrets
 
 ITERATIONS=600_000
+DEFAULT_PASSWORD='stopp'
+PASSWORD_REVISION='2'
 
 
 class AdminAuth:
@@ -11,7 +13,14 @@ class AdminAuth:
         self.repository=repository
         self.authenticated=False
         if not repository.connection.execute('SELECT 1 FROM admin_credentials WHERE id=1').fetchone():
-            self._store('Innovanta_20102026')
+            self._store(DEFAULT_PASSWORD)
+        elif not repository.connection.execute("SELECT 1 FROM admin_settings WHERE key='default_password_revision'").fetchone():
+            # Upgrade the previous initial password by verifying its salted hash.
+            # User-changed credentials must remain valid after an application update.
+            if self.verify('Innovanta_20102026'):
+                self._store(DEFAULT_PASSWORD)
+        with repository.connection:
+            repository.connection.execute("INSERT OR IGNORE INTO admin_settings VALUES ('default_password_revision',?)",(PASSWORD_REVISION,))
 
     def _store(self,password):
         salt=secrets.token_bytes(32)
@@ -40,6 +49,6 @@ class AdminAuth:
         self.require()
         if not self.verify(current):
             raise ValueError('Неверный текущий пароль')
-        if len(new)<10:
-            raise ValueError('Новый пароль должен содержать минимум 10 символов')
+        if not new or not new.strip():
+            raise ValueError('Новый пароль не должен быть пустым')
         self._store(new)

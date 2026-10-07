@@ -59,7 +59,12 @@ def _decode(value: object) -> object:
         return {_decode(k): _decode(v) for k, v in value['mapping']}
     if set(value) == {'type', 'fields'} and value['type'] in TYPES:
         cls = TYPES[value['type']]
-        if set(value['fields']) != {f.name for f in fields(cls)}:
+        expected={f.name for f in fields(cls)}
+        # Additive fields in old persisted events/layouts have explicit defaults.
+        optional={'ShipmentEvent':{'packaging','legacy_line_key'},'ReturnEvent':{'packaging','legacy_line_key'},
+                  'SheetLayout':{'packaging_unit'}}.get(value['type'],set())
+        present=set(value['fields'])
+        if present-expected or expected-present-optional:
             raise ValueError('Несовместимая структура снимка')
         return cls(**{k: _decode(v) for k, v in value['fields'].items()})
     raise ValueError('Неизвестный тип снимка')

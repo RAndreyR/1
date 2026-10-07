@@ -11,7 +11,7 @@ from tests.event_helpers import sales_book,price_book
 
 def ready(tmp_path,*,threshold='100'):
     repo=WorkspaceRepository(tmp_path/'app.db');service=WorkspaceService(repo)
-    service.login_admin('Innovanta_20102026')
+    service.login_admin('stopp')
     employee=repo.resolve_employee('Трофимов')
     service.set_role(employee.id,2026,'KAM')
     service.import_price(price_book(tmp_path/'price.xlsx',threshold=threshold))
@@ -170,7 +170,7 @@ def test_unallocated_return_manual_resolution_and_admin_guard(tmp_path):
         service.logout_admin()
         with pytest.raises(PermissionError):
             service.reconcile_manually(imported.returns[0].event_id,imported.shipments[0].event_id,employee.id)
-        service.login_admin('Innovanta_20102026')
+        service.login_admin('stopp')
         service.reconcile_manually(imported.returns[0].event_id,imported.shipments[0].event_id,employee.id)
         reconciled=service.calculate(employee.id,2026).calculation
         assert not reconciled.unallocated_returns and reconciled.quarters[2].clawback==10

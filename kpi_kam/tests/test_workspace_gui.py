@@ -28,7 +28,7 @@ def wait_import(window):
 
 
 def prepare(window,tmp_path,role='KAM',raw='Товар'):
-    window.admin.password.setText('Innovanta_20102026');window.admin.login.click()
+    window.admin.password.setText('stopp');window.admin.login.click()
     assert window.workflow.is_admin
     employee=window.repository.resolve_employee('Трофимов')
     window.workflow.set_role(employee.id,2026,role)
@@ -80,7 +80,29 @@ def test_product_mapping_requires_explicit_choice_and_uses_calls_engine(desktop,
     assert desktop.workspace_saved.calculation.quarters[0].calls_bonus==28000
     assert desktop.workspace_saved.calculation.quarters[0].payable==28050
     desktop.open_workspace_history(desktop.workspace_saved.id)
-    assert desktop.mappings.grid.item(0,3).text()=='alias'
+    assert desktop.mappings.grid.item(0,4).text()=='alias'
+
+
+def test_common_sales_mapping_shows_packaging_and_filters_other_sizes(desktop,tmp_path):
+    from tests.test_packaging_mapping import packaged_sales,price_variants
+    prepare(desktop,tmp_path,raw='Стандарт')
+    desktop.begin_price_import(str(price_variants(tmp_path/'variants.xlsx')));wait_import(desktop)
+    desktop.begin_sales_import(str(packaged_sales(tmp_path/'packaged.xlsx')));wait_import(desktop)
+    assert desktop.mappings.grid.rowCount()==3
+    assert desktop.mappings.grid.horizontalHeaderItem(1).text()=='Фасовка'
+    for row in range(3):
+        desktop.mappings.grid.selectRow(row)
+        size=desktop.mappings.grid.item(row,1).text()
+        assert desktop.mappings.products.count()==2
+        assert size in desktop.mappings.products.itemText(1)
+        desktop.mappings.products.setCurrentIndex(1)
+        QTest.mouseClick(desktop.mappings.apply,Qt.MouseButton.LeftButton)
+        assert not desktop.error_label.isVisible(),desktop.error_label.text()
+    desktop.calculate_button.click()
+    assert desktop.workspace_saved is not None,desktop.error_label.text()
+    assert [a.audit.product.canonical_name for a in desktop.workspace_saved.calculation.event_audit]==[
+        'Иннованта Стандарт 200 мл','Иннованта Стандарт 500 мл','Иннованта Стандарт 1000 мл']
+    assert [desktop.shipments.grid.item(row,16).text() for row in range(3)]==['200 мл','500 мл','1000 мл']
 
 
 def test_returns_screen_and_guard_against_ordinary_price_import(desktop,tmp_path):
@@ -139,7 +161,7 @@ def test_admin_password_change_and_unknown_manager_mapping(desktop,tmp_path):
     desktop.admin.employees.setCurrentIndex(desktop.admin.employees.findText('Трофимов Дмитрий'))
     desktop.map_employee()
     assert desktop.workflow.unknown_managers(desktop.repository.latest_sales(2026)[1])==()
-    desktop.admin.old_password.setText('Innovanta_20102026')
+    desktop.admin.old_password.setText('stopp')
     desktop.admin.new_password.setText('Changed_password_2026')
     desktop.admin.repeat_password.setText('Changed_password_2026')
     desktop.change_admin_password();desktop.admin.logout.click()
@@ -150,7 +172,7 @@ def test_admin_password_change_and_unknown_manager_mapping(desktop,tmp_path):
 
 def role_editor(window):
     window.navigate(13)
-    window.admin.password.setText('Innovanta_20102026')
+    window.admin.password.setText('stopp')
     window.admin.login.click()
     window.admin.tabs.setCurrentIndex(1)
     return next(button for button in window.admin.findChildren(QPushButton)

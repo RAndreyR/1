@@ -41,12 +41,13 @@ class DataPage(QWidget):
 
 class MappingPage(DataPage):
     def __init__(self,window):
-        super().__init__('Сопоставление товаров',['Из файла продаж','Продукт прайса','Группа','Статус'],
-            'Точное совпадение → сохраненный алиас → ручное решение. Группа берется из внешнего прайса.')
+        super().__init__('Сопоставление товаров',['Из файла продаж','Фасовка','Продукт прайса','Группа','Статус'],
+            'Название и фасовка сопоставляются вместе. 200 мл — сиппинг; 500/1000 мл — реторты. Группа берется из внешнего прайса.')
         actions=QHBoxLayout();self.body.addLayout(actions)
         self.products=QComboBox();actions.addWidget(self.products,1)
         self.apply=button('Подтвердить и сохранить алиас',window.apply_product_mapping,actions)
         self.leave=button('Оставить вне зеленой зоны',window.leave_product_mapping,actions)
+        self.grid.itemSelectionChanged.connect(window.refresh_mapping_products)
 
 
 class AdminPanel(QWidget):
@@ -119,7 +120,7 @@ class ColumnMappingDialog(QDialog):
         rows=[tuple(cells.get(i) for i in range(1,max_columns+1)) for _,cells in rows]
         self.setWindowTitle(f'Подтвердите колонки: {sheet_name}');self.resize(1050,750)
         body=QVBoxLayout(self)
-        description=QLabel('Не найдены обязательные заголовки. Выберите строку под месячными группами и колонки по предпросмотру. Данные начинаются со следующей строки.')
+        description=QLabel('Не найдены обязательные заголовки. Выберите строку под месячными группами и колонки по предпросмотру. Укажите колонку фасовки, если она есть, и единицу для числовых значений. Данные начинаются со следующей строки.')
         description.setWordWrap(True);body.addWidget(description)
         form=QFormLayout();body.addLayout(form)
         self.header=QSpinBox();self.header.setRange(1,30);form.addRow('Строка перед данными',self.header)
@@ -134,10 +135,15 @@ class ColumnMappingDialog(QDialog):
                         samples.append(str(value))
                 combo.addItem(f'{get_column_letter(index+1)}: '+ ' / '.join(samples[:3])[:120],index+1)
             form.addRow(label,combo);self.columns[field]=combo
+        self.packaging_unit=QComboBox();self.packaging_unit.addItem('Единица указана в ячейке / заголовке','')
+        for unit in ('мл','л','г','кг'):self.packaging_unit.addItem(unit,unit)
+        form.addRow('Единица фасовки (для чисел без единицы)',self.packaging_unit)
         preview=table(['Строка']+[get_column_letter(i+1) for i in range(max_columns)])
         fill_table(preview,[[i+1,*list(row),*(['']*(max_columns-len(row)))] for i,row in enumerate(rows[:35])]);body.addWidget(preview,1)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);body.addWidget(buttons)
 
     def layout_value(self):
-        return SheetLayout(self.sheet_name,self.header.value(),{key:combo.currentData() for key,combo in self.columns.items()})
+        return SheetLayout(self.sheet_name,self.header.value(),
+            {key:combo.currentData() for key,combo in self.columns.items() if combo.currentData() is not None},
+            self.packaging_unit.currentData())

@@ -156,6 +156,7 @@ class WorkspaceRepository(ApplicationRepository):
             raise CalculationInputError('Исправьте структуру продаж перед сохранением')
         layout_hash=sha256(dump_object(imported.layouts).encode()).hexdigest()
         with self.connection:
+            imported=self._retain_legacy_event_ids(imported)
             self.connection.execute('UPDATE sales_imports SET active=0 WHERE year=?',(imported.year,))
             self.connection.execute('''INSERT INTO sales_imports(source_file,source_hash,year,layout_hash,imported_at,payload_json)
                 VALUES (?,?,?,?,?,?) ON CONFLICT(source_hash,year,layout_hash) DO UPDATE SET active=1''',
@@ -169,8 +170,46 @@ class WorkspaceRepository(ApplicationRepository):
                     self.connection.execute(f'''INSERT OR IGNORE INTO {table}
                         (event_id,line_key,first_import_id,year,month,quantity,revenue,payload_json) VALUES (?,?,?,?,?,?,?,?)''',
                         (e.event_id,e.line_key,iid,e.year,e.month,str(e.quantity),str(e.revenue),dump_object(e)))
+                    # Add packaging to event metadata while keeping closed snapshots untouched.
+                    old=self.connection.execute(f'SELECT payload_json FROM {table} WHERE event_id=?',(e.event_id,)).fetchone()
+                    if old and e.packaging and not load_object(old[0]).packaging:
+                        self.connection.execute(f'UPDATE {table} SET payload_json=? WHERE event_id=?',(dump_object(e),e.event_id))
                     self.connection.execute('INSERT OR IGNORE INTO sales_import_events VALUES (?,?,?)',(iid,e.event_id,kind))
         return iid
+
+    def _retain_legacy_event_ids(self,imported):
+        """First package-aware reimport must not turn existing paid sales into new sales."""
+        if not any(e.legacy_line_key for e in (*imported.shipments,*imported.returns)):
+            return imported
+        from app.services.sales_importer import fingerprint,decimal_identity
+        cache={}
+        # Converted old contract rows retain their identity even if rows of two
+        # different package sizes are subsequently reordered in Excel.
+        known={}
+        def business(event):
+            return tuple(normalize_text(getattr(event,k)) for k in
+                ('source_sheet','manager','contract','lpu','db','product_raw','legal_entity'))+(event.packaging,)
+        for (payload,) in self.connection.execute('SELECT payload_json FROM shipment_events UNION ALL SELECT payload_json FROM return_events'):
+            previous=load_object(payload)
+            if previous.packaging and previous.legacy_line_key==previous.line_key:
+                known.setdefault(business(previous),set()).add(previous.line_key)
+        def retain(event,is_return):
+            if not event.legacy_line_key:return event
+            line=event.legacy_line_key
+            compatible=known.get(business(event),set())
+            if len(compatible)==1:
+                line=next(iter(compatible))
+            if line not in cache:
+                stored=self.connection.execute('SELECT payload_json FROM shipment_events WHERE line_key=? UNION ALL SELECT payload_json FROM return_events WHERE line_key=?',(line,line)).fetchall()
+                cache[line]=tuple(load_object(r[0]) for r in stored)
+            previous=cache[line]
+            if not previous:return event
+            sizes={e.packaging for e in previous if e.packaging}
+            if sizes and event.packaging not in sizes:return event
+            return replace(event,line_key=line,legacy_line_key=line,event_id=fingerprint(line,event.year,event.month,is_return,
+                decimal_identity(event.quantity),decimal_identity(event.revenue)))
+        return replace(imported,shipments=tuple(retain(e,False) for e in imported.shipments),
+            returns=tuple(retain(e,True) for e in imported.returns))
 
     def latest_sales(self,year):
         row=self.connection.execute('SELECT id,payload_json FROM sales_imports WHERE year=? AND active=1 ORDER BY id DESC LIMIT 1',(year,)).fetchone()

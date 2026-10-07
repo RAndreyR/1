@@ -28,13 +28,13 @@ def test_admin_hash_and_session_permissions(tmp_path):
         with pytest.raises(PermissionError):
             service.add_employee('Новый Сотрудник')
         assert not service.login_admin('wrong')
-        assert service.login_admin('Innovanta_20102026')
+        assert service.login_admin('stopp')
         service.add_employee('Новый Сотрудник')
-        service.change_password('Innovanta_20102026','new-long-password')
+        service.change_password('stopp','new-long-password')
         service.logout_admin()
-        assert not service.login_admin('Innovanta_20102026')
+        assert not service.login_admin('stopp')
         assert service.login_admin('new-long-password')
-    assert b'Innovanta_20102026' not in path.read_bytes()
+    assert b'stopp' not in path.read_bytes()
     assert b'new-long-password' not in path.read_bytes()
     with WorkspaceRepository(path) as repo:
         assert not WorkspaceService(repo).is_admin

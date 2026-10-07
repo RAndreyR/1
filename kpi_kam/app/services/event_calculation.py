@@ -7,6 +7,7 @@ from app.services.calculation_engine import calculate_kpi
 from app.services.sales_importer import client_identity
 from app.services.return_reconciliation import allocate_returns
 from app.utils.normalization import CalculationInputError, decimal_value
+from app.utils.packaging import product_mapping_key
 
 
 def calls_bonus(fact,plan,policy):
@@ -48,12 +49,13 @@ def _calculate(events,returns,products,plans,policy,aliases,calls_plans,calls_fa
     inputs=[]
     for i,e in enumerate(events,1):
         kind,client=client_identity(e.db,e.lpu)
-        inputs.append(Shipment(i,e.quarter,kind,e.product_raw,e.quantity,e.revenue,None,client,e.legal_entity,e.contract))
+        inputs.append(Shipment(i,e.quarter,kind,product_mapping_key(e.product_raw,e.packaging),e.quantity,e.revenue,None,client,e.legal_entity,e.contract))
     history=dict(paid_amounts or {})
     current_payments={p.quarter:p for p in paid_records if p.year==year}
     history.update({q:p.amount for q,p in current_payments.items() if q<=3})
     result=calculate_kpi(inputs,products,plans,policy.rules,{q:v for q,v in history.items() if q<=3},aliases=aliases)
-    audits=[EventAudit(e,a,policy.role,policy.rules.rates[a.block-1] if a.block else ZERO) for e,a in zip(events,result.audit,strict=True)]
+    audits=[EventAudit(e,replace(a,shipment=replace(a.shipment,product_raw=e.product_raw)),
+        policy.role,policy.rules.rates[a.block-1] if a.block else ZERO) for e,a in zip(events,result.audit,strict=True)]
     frozen_sources={a.event.event_id:a for p in paid_records for a in p.snapshot.calculation.event_audit
                     if a.event.year==p.year and a.event.quarter==p.quarter}
     # Any changed/deleted paid source is a reconciliation issue, never a new sale.

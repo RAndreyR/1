@@ -15,7 +15,7 @@ def sales_book(path,*,manager='Трофимов',months=None,returns=None,year=2
         # Reverse metadata order and offset monthly groups: no fixed Excel letters.
         fields.reverse()
         values={'fo':'ФО','region':'Регион','manager':manager,'lpu':'Больница','db':db,
-                'legal_entity':'ЮЛ','contract':contract,'product_raw':raw}
+                'legal_entity':'ЮЛ','contract':contract,'product_raw':raw,'packaging':None}
         for col,field in enumerate(fields,2):
             if not missing_headers or index==0:
                 sheet.cell(header,col,FIELDS[field])

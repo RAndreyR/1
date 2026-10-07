@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.models.domain import ZERO
 from app.models.events import ReturnAllocation
 from app.utils.normalization import CalculationInputError
+from app.utils.packaging import normalize_packaging,name_packaging
 
 
 def allocate_returns(audits,returns,*,paid_quarters=(),previous=(),manual_links=None,year=2026):
@@ -38,8 +39,17 @@ def allocate_returns(audits,returns,*,paid_quarters=(),previous=(),manual_links=
         explicit=manual_links.get(ret.event_id)
         if explicit and explicit not in sources:
             raise CalculationInputError('Выбранная исходная отгрузка не найдена')
+        def same_packaging(source):
+            original=normalize_packaging(source.event.packaging) or name_packaging(source.event.product_raw)
+            returned=normalize_packaging(ret.packaging) or name_packaging(ret.product_raw)
+            if not original and source.audit.product:
+                original=name_packaging(source.audit.product.canonical_name)
+            return not returned or not original or original==returned
+        if explicit and not same_packaging(sources[explicit]):
+            raise CalculationInputError('Фасовка возврата и исходной отгрузки различается')
         candidates=[a for a in sources.values() if
                     ((a.event.event_id==explicit) if explicit else a.event.line_key==ret.line_key)
+                    and same_packaging(a)
                     and (a.event.year,a.event.month)<=(ret.year,ret.month)]
         candidates.sort(key=lambda a:(a.event.year,a.event.month,a.event.source_row,a.event.event_id))
         for source in candidates:

@@ -39,6 +39,8 @@ def export_workspace(repository,path,year,employee_id=None,quarter=None):
         'Планы':['ФИО','Год','Роль','Квартал','План отгрузок','План звонков','Факт звонков'],
         'Параметры':['Тип','ФИО','Год','Расчет','Price version','Источник','SHA256 / Параметр','Значение']}
     for name,values in headers.items():_row(book.create_sheet(name),values)
+    for name in ('Включенные отгрузки','Исключенные отгрузки','Возвраты'):
+        book[name].cell(1,len(headers[name])+1,'Фасовка')
     snapshots={}
     for entry in repository.workspace_history(employee_id,year):
         snapshot=repository.workspace_snapshot(entry[0])
@@ -64,13 +66,13 @@ def export_workspace(repository,path,year,employee_id=None,quarter=None):
                 a.product.canonical_name if a.product else '',a.product.category if a.product else '',
                 e.quantity,e.revenue,a.actual_price_rounded,a.threshold_rounded,a.block,event.rate,e.source_sheet,e.source_row,e.contract,e.event_id]
             _row(book['Включенные отгрузки'] if a.eligible else book['Исключенные отгрузки'],
-                 values+([] if a.eligible else [a.exclusion_reason])+[payments[e.quarter].snapshot.price.id if e.quarter in payments else snapshot.price.id])
+                 values+([] if a.eligible else [a.exclusion_reason])+[payments[e.quarter].snapshot.price.id if e.quarter in payments else snapshot.price.id,e.packaging])
         for review in calc.return_reviews:
             e=review.event
             if e.quarter in selected_quarters:
                 _row(book['Возвраты'],[name,e.year,e.month,e.quarter,client_identity(e.db,e.lpu)[1],e.product_raw,
                     e.quantity,e.revenue,review.remaining_quantity,review.remaining_revenue,review.clawback,review.status,
-                    e.source_sheet,e.source_row,e.contract,e.event_id])
+                    e.source_sheet,e.source_row,e.contract,e.event_id,e.packaging])
         for a in calc.allocations:
             if a.target_year==year and a.target_quarter in selected_quarters:
                 _row(book['Корректировки'],[name,a.return_id,a.shipment_id,a.product.canonical_name if a.product else '',

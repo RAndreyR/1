@@ -10,11 +10,15 @@ from app.models.import_data import SheetLayout, ValidationIssue
 from app.services.excel_importer import _header, _parse_number
 from app.services.workbook_reader import read_workbook
 from app.utils.normalization import normalize_text, CalculationInputError
+from app.utils.packaging import sales_packaging
 
 EMPTY_DB={'','-','—','нет','не указан','не указано','не задан','нет данных','n/a','na','none','null'}
 FIELDS={'fo':'ФО','region':'Регион','manager':'Менеджер','lpu':'ЛПУ/КА','db':'ДБ',
-        'legal_entity':'Отгрузка ЮЛ','contract':'Номер контракта','product_raw':'Наименование'}
-REQUIRED=set(FIELDS)-{'fo','region'}
+        'legal_entity':'Отгрузка ЮЛ','contract':'Номер контракта','product_raw':'Наименование',
+        'packaging':'Фасовка'}
+REQUIRED=set(FIELDS)-{'fo','region','packaging'}
+PACKAGING_HEADERS={'фасовка','фасовка, мл','фасовка мл','фасовка, л','фасовка, кг, гр',
+                   'фасовка, кг','фасовка, г','фасовка, гр','объем, мл','объём, мл','объем','объём'}
 SHEETS=('контракты СБКС, ВМК','контракты ЭП')
 MONTHS=('январ','феврал','март','апрел','ма','июн','июл','август','сентябр','октябр','ноябр','декабр')
 QUANTITY={'кг','шт','количество','кол-во','количество, кг','количество, шт','кол-во, кг'}
@@ -107,8 +111,10 @@ def import_sales(path, year, *, column_mappings=None):
         month_row,groups=_groups(rows,year,name,issues,data.merged_spans[name])
         candidates=[]
         for number,cells in rows[:30]:
-            found={field:[col for col,value in cells.items() if _header(value)==_header(label)] for field,label in FIELDS.items()}
-            if all(len(found[k])==1 for k in REQUIRED):
+            found={field:[col for col,value in cells.items() if
+                (_header(value) in PACKAGING_HEADERS if field=='packaging' else _header(value)==_header(label))]
+                for field,label in FIELDS.items()}
+            if all(len(found[k])==1 for k in REQUIRED) and len(found['packaging'])<=1:
                 candidates.append(SheetLayout(name,number,{k:v[0] for k,v in found.items() if v}))
         explicit=(column_mappings or {}).get(name)
         if explicit is not None:
@@ -124,13 +130,23 @@ def import_sales(path, year, *, column_mappings=None):
             issues.append(ValidationIssue('metadata_headers',f'Лист {name}: нужны заголовки или явное сопоставление колонок','error',name))
             continue
         layouts.append(layout)
-        occurrences={}
+        packaging_header=next((cells.get(layout.columns.get('packaging')) for number,cells in rows if number==layout.header_row),'')
+        unit=layout.packaging_unit
+        if unit not in ('','мл','л','г','кг'):
+            raise CalculationInputError('Некорректная единица фасовки')
+        if not unit:
+            header_text=_header(packaging_header)
+            unit=next((u for u in ('мл','кг','гр','г','л') if re.search(r'(?<!\w)'+u+r'(?!\w)',header_text)),'')
+            # A header listing both kg and g does not specify the cell's unit.
+            if 'кг' in header_text and ('гр' in header_text or re.search(r'\bг\b',header_text)):unit=''
+        occurrences={};legacy_occurrences={}
         for number,cells in rows:
             if number<=max(layout.header_row,month_row):
                 continue
             metadata={k:str(cells.get(c,'') or '').strip() for k,c in layout.columns.items()}
             for field in FIELDS:
                 metadata.setdefault(field,'')
+            metadata['packaging']=sales_packaging(metadata['product_raw'],metadata['packaging'],unit)
             if normalize_text(metadata['manager'])=='тендер':
                 excluded_tender+=1
                 continue
@@ -155,13 +171,18 @@ def import_sales(path, year, *, column_mappings=None):
             if not metadata['manager'] or not metadata['product_raw']:
                 issues.append(ValidationIssue('missing_event_identity','У денежной строки не задан менеджер или продукт','error',name,number))
             business=fingerprint(normalize_text(name),*(normalize_text(metadata[k]) for k in ('manager','contract','lpu','db','product_raw','legal_entity')))
+            legacy_occurrence=legacy_occurrences.get(business,0);legacy_occurrences[business]=legacy_occurrence+1
+            legacy_line=fingerprint(business,legacy_occurrence)
+            if metadata['packaging']:
+                business=fingerprint(business,metadata['packaging'])
             occurrence=occurrences.get(business,0);occurrences[business]=occurrence+1
             line=fingerprint(business,occurrence)
             for month,is_return,qty,amount in pairs:
                 event_id=fingerprint(line,year,month,is_return,decimal_identity(qty),decimal_identity(amount))
                 cls=ReturnEvent if is_return else ShipmentEvent
                 event=cls(event_id,line,name,number,metadata['manager'],year,month,metadata['product_raw'],qty,amount,
-                          metadata['lpu'],metadata['db'],metadata['legal_entity'],metadata['contract'],metadata['fo'],metadata['region'])
+                          metadata['lpu'],metadata['db'],metadata['legal_entity'],metadata['contract'],metadata['fo'],metadata['region'],metadata['packaging'],
+                          legacy_line if metadata['packaging'] else '')
                 (returns if is_return else shipments).append(event)
                 if qty==0:
                     issues.append(ValidationIssue('zero_quantity','Нулевая месячная численность: зеленая зона недоступна','warning',name,number))

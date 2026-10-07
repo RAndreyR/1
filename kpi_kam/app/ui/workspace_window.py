@@ -15,6 +15,7 @@ from app.services.price_importer import import_price
 from app.services.sales_importer import import_sales,client_identity
 from app.services.workbook_reader import read_workbook
 from app.utils.input_values import nonnegative_number,percentage,percent_text,percent_input
+from app.utils.packaging import split_mapping_key,packaging_compatible
 from app.ui.main_window import MainWindow,ERRORS
 from app.ui.common import page_layout,fill_table,money,number
 from app.ui.workspace_pages import DataPage,MappingPage,AdminPanel,ColumnMappingDialog,button
@@ -78,9 +79,9 @@ class WorkspaceWindow(MainWindow):
         self.mappings=MappingPage(self)
         self.shipments=DataPage('Сформированные отгрузки',[
             'Месяц','Квартал','Клиент','Тип','Продукт из файла','Канонический продукт','Группа',
-            'Количество','Выручка','Цена','Порог','Eligible','Лист','Строка','Контракт','Причина исключения'])
+            'Количество','Выручка','Цена','Порог','Eligible','Лист','Строка','Контракт','Причина исключения','Фасовка'])
         self.returns=DataPage('Возвраты',['Месяц','Сотрудник','Клиент','Продукт','Сумма','Количество',
-            'Исходная отгрузка','Исходный квартал','Eligible','Оплачен?','Clawback','Остаток суммы','Остаток количества','Статус'])
+            'Исходная отгрузка','Исходный квартал','Eligible','Оплачен?','Clawback','Остаток суммы','Остаток количества','Статус','Фасовка'])
         self.reconcile_button=button('Выбрать исходную отгрузку (администратор)',self.reconcile_return,self.returns.body)
         self.premiums=DataPage('Расчет премии',['Квартал','План','Продажи до возвратов','Возвраты','Факт после возвратов',
             'Выполнение','Блок 1','Блок 2','Блок 3','Блок 4','Звонки план','Звонки факт','Звонки премия',
@@ -194,11 +195,17 @@ class WorkspaceWindow(MainWindow):
 
     def refresh_mappings(self):
         entries=self.workflow.product_mappings(self.employee.currentData(),self.year.value())
-        self.mappings.set_rows([[raw,p.canonical_name if p else '',p.category if p else '',kind or 'Требует подтверждения'] for raw,p,kind in entries],[raw for raw,_,_ in entries])
+        self.mappings.set_rows([[*split_mapping_key(raw),p.canonical_name if p else '',p.category if p else '',kind or 'Требует подтверждения'] for raw,p,kind in entries],[raw for raw,_,_ in entries])
+        self.refresh_mapping_products()
+
+    def refresh_mapping_products(self):
         self.mappings.products.clear();self.mappings.products.addItem('Выберите продукт прайса',None)
         price=self.repository.price_version()
+        raw=self.mappings.selected_key()
         if price:
-            for p in price.products:self.mappings.products.addItem(f'{p.canonical_name} · {p.category}',p.id)
+            for p in price.products:
+                if raw is None or packaging_compatible(raw,p.canonical_name):
+                    self.mappings.products.addItem(f'{p.canonical_name} · {p.category}',p.id)
 
     def choose_sales(self):
         path,_=QFileDialog.getOpenFileName(self,'Общий файл продаж','','Excel (*.xlsx *.xlsm)')
@@ -314,7 +321,7 @@ class WorkspaceWindow(MainWindow):
         self.shipments.set_rows([[f'{e.event.year}-{e.event.month:02}',f'Q{e.event.quarter}',e.audit.shipment.client,e.audit.client_type,
             e.event.product_raw,e.audit.product.canonical_name if e.audit.product else '',e.audit.product.category if e.audit.product else '',
             number(e.event.quantity),money(e.event.revenue),number(e.audit.actual_price_rounded),number(e.audit.threshold_rounded),
-            'Да' if e.audit.eligible else 'Нет',e.event.source_sheet,e.event.source_row,e.event.contract,e.audit.exclusion_reason or '']
+            'Да' if e.audit.eligible else 'Нет',e.event.source_sheet,e.event.source_row,e.event.contract,e.audit.exclusion_reason or '',e.event.packaging]
             for e in calc.event_audit],[e.event.event_id for e in calc.event_audit])
         rows=[];keys=[]
         for review in calc.return_reviews:
@@ -324,7 +331,7 @@ class WorkspaceWindow(MainWindow):
                     a.product.canonical_name if a and a.product else event.product_raw,money(event.revenue),number(event.quantity),
                     a.shipment_id if a else '',f'{a.original_year} Q{a.original_quarter}' if a else '',
                     'Да' if a and a.eligible else 'Нет','Да' if a and a.paid else 'Нет',money(a.clawback) if a else '0',
-                    money(review.remaining_revenue),number(review.remaining_quantity),review.status]);keys.append(event.event_id)
+                    money(review.remaining_revenue),number(review.remaining_quantity),review.status,event.packaging]);keys.append(event.event_id)
         self.returns.set_rows(rows,keys)
         payments={p.quarter:p for p in self.repository.payments(snapshot.employee.id,snapshot.profile.year)}
         self.premiums.set_rows([[f'Q{p.quarter}',money(q.plan),money(p.positive_sales),money(p.returns),money(p.actual),percent_text(q.achievement),

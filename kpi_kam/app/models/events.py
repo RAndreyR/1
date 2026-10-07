@@ -24,6 +24,8 @@ class ShipmentEvent:
     contract: str = ''
     fo: str = ''
     region: str = ''
+    packaging: str = ''
+    legacy_line_key: str = ''  # Compatibility identity for pre-packaging imports.
 
     def __post_init__(self):
         if not self.event_id or not self.line_key or not 1 <= self.month <= 12 or not 1900 <= self.year <= 2100:

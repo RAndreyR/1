@@ -8,6 +8,7 @@ from app.services.sales_importer import import_sales
 from app.services.event_calculation import calculate_events
 from app.services.product_matcher import ProductMatcher
 from app.utils.normalization import CalculationInputError, normalize_text
+from app.utils.packaging import product_mapping_key,packaging_compatible
 
 
 class WorkspaceService:
@@ -55,6 +56,7 @@ class WorkspaceService:
         imported=import_sales(path,year,column_mappings=column_mappings)
         if not imported.errors:
             self.repository.save_sales(imported)
+            imported=self.repository.latest_sales(year)[1]
         return imported
 
     def unknown_managers(self,imported):
@@ -75,12 +77,13 @@ class WorkspaceService:
         for e in (*active[1].shipments,*active[1].returns):
             employee=self.repository.resolve_employee(e.manager)
             if employee and employee.id==employee_id:
-                names.add(e.product_raw)
+                key=product_mapping_key(e.product_raw,e.packaging)
+                names.add(key)
                 source=frozen.get(e.event_id) or (frozen_lines.get(e.line_key) if e in active[1].returns else None)
                 if source:
-                    historical[e.product_raw]=source.audit.product
+                    historical[key]=source.audit.product
                 else:
-                    require_current.add(e.product_raw)
+                    require_current.add(key)
         left={r[0] for r in self.repository.connection.execute('SELECT alias_normalized FROM product_mapping_decisions WHERE price_version_id=?',(price.id,))}
         results=[]
         for raw in sorted(names):
@@ -91,16 +94,21 @@ class WorkspaceService:
             results.append((raw,product,kind if product else 'left_unmatched' if normalize_text(raw) in left else None))
         return tuple(results)
 
-    def map_product(self,raw,pid):
+    def map_product(self,raw,pid,*,packaging=''):
+        raw=product_mapping_key(raw,packaging)
         price=self.repository.price_version()
         if price is None or pid not in {p.id for p in price.products}:
             raise CalculationInputError('Выберите товар из активного внешнего прайса')
+        product=next(p for p in price.products if p.id==pid)
+        if not packaging_compatible(raw,product.canonical_name):
+            raise CalculationInputError('Фасовка из продаж не соответствует фасовке продукта прайса')
         matched,kind=ProductMatcher(price.products).match(raw)
         if kind=='exact' and matched.id!=pid:
             raise CalculationInputError('Точное совпадение имеет приоритет')
         self.repository.remember(raw,pid)
 
-    def leave_product_unmatched(self,raw):
+    def leave_product_unmatched(self,raw,*,packaging=''):
+        raw=product_mapping_key(raw,packaging)
         price=self.repository.price_version()
         if price is None:
             raise CalculationInputError('Сначала импортируйте внешний прайс')
@@ -141,7 +149,7 @@ class WorkspaceService:
         price=self.repository.price_version()
         aliases={k:v for k,v in self.repository.aliases().items() if v in {p.id for p in price.products}}
         matcher=ProductMatcher(price.products,aliases)
-        rp,_=matcher.match(ret.product_raw);sp,_=matcher.match(source.product_raw)
+        rp,_=matcher.match(ret.product_raw,ret.packaging);sp,_=matcher.match(source.product_raw,source.packaging)
         if not rp or not sp or rp.id!=sp.id:
             raise CalculationInputError('Возврат и продажа должны относиться к одному каноническому продукту')
         self.repository.save_manual_link(return_id,shipment_id)

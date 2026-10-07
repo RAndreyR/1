@@ -64,16 +64,16 @@ class WorkspaceWindow(MainWindow):
         self.employee=QComboBox();form.addRow('Сотрудник',self.employee)
         self.year=QSpinBox();self.year.setRange(1900,2100);self.year.setValue(datetime.now().year);form.addRow('Год',self.year)
         self.role_label=QLabel();form.addRow('Должность на год',self.role_label)
-        self.plan_inputs=[];self.call_inputs=[]
+        self.plan_inputs=[];self.call_inputs=[];self.calls_plan_inputs=[]
         self.calls_box=QGroupBox('Звонки · менеджер сопровождения');calls=QFormLayout(self.calls_box)
-        self.calls_plan_labels=[]
         for q in range(1,5):
             edit=QLineEdit();edit.setPlaceholderText('Обязательный план');self.plan_inputs.append(edit);form.addRow(f'План Q{q}, ₽',edit)
+            call_plan=QLineEdit();call_plan.setPlaceholderText('Положительный план')
+            self.calls_plan_inputs.append(call_plan);calls.addRow(f'План звонков Q{q}',call_plan)
             fact=QLineEdit('0');self.call_inputs.append(fact);calls.addRow(f'Факт звонков Q{q}',fact)
-            label=QLabel();self.calls_plan_labels.append(label);calls.addRow(f'План звонков Q{q}',label)
         body.addWidget(self.calls_box)
         actions=QHBoxLayout();body.addLayout(actions)
-        button('Сохранить планы и звонки',self.save_workspace_inputs,actions)
+        self.save_inputs_button=button('Сохранить планы и звонки',self.save_workspace_inputs,actions)
         self.calculate_button=button('Рассчитать премию',self.calculate_workspace,actions);self.calculate_button.setObjectName('primary')
         self.readiness=QLabel();self.readiness.setWordWrap(True);body.addWidget(self.readiness);body.addStretch()
         self.mappings=MappingPage(self)
@@ -138,12 +138,14 @@ class WorkspaceWindow(MainWindow):
             self.role_label.setText({'KAM':'КАМ','SUPPORT':'Менеджер сопровождения'}.get(role,'Не задана — обратитесь к администратору'))
             self.calls_box.setVisible(role=='SUPPORT')
             payments={p.quarter:p for p in self.repository.payments(eid,year)} if eid else {}
+            default_calls_plan=self.repository.role_policy(role).default_calls_plan if role else Decimal('750')
             for i in range(4):
                 self.plan_inputs[i].setText(number(profile.plans.values[i]) if profile else '')
                 self.plan_inputs[i].setReadOnly(i+1 in payments)
                 self.call_inputs[i].setText(number(profile.calls_facts[i]) if profile else '0')
                 self.call_inputs[i].setReadOnly(i+1 in payments)
-                self.calls_plan_labels[i].setText(number(profile.calls_plans[i]) if profile else '750')
+                self.calls_plan_inputs[i].setText(number(profile.calls_plans[i]) if profile else number(default_calls_plan))
+                self.calls_plan_inputs[i].setReadOnly(i+1 in payments)
             if eid:
                 with self.repository.connection:
                     self.repository.connection.executemany('INSERT OR REPLACE INTO admin_settings VALUES (?,?)',
@@ -297,8 +299,10 @@ class WorkspaceWindow(MainWindow):
 
     def _save_inputs(self):
         eid=self.employee.currentData();year=self.year.value()
+        support=self.repository.year_role(eid,year)=='SUPPORT'
         return self.workflow.save_inputs(eid,year,Plans(*(nonnegative_number(edit.text()) for edit in self.plan_inputs)),
-            calls_facts=tuple(nonnegative_number(edit.text()) for edit in self.call_inputs))
+            calls_plans=tuple(nonnegative_number(edit.text()) for edit in self.calls_plan_inputs) if support else None,
+            calls_facts=tuple(nonnegative_number(edit.text()) for edit in self.call_inputs) if support else None)
 
     def save_workspace_inputs(self):
         self.safe(lambda:(self._save_inputs(),self.refresh_sources()))

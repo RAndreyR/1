@@ -152,7 +152,7 @@ def test_settings_and_history_preserve_previous_calculation(window):
     window.show_premium(4)
     assert '139 195,47' in window.premium_page.annual.text()
     assert '112 087,85' in window.premium_page.cards['payable'].value.text()
-    assert window.premium_page.cards['gate'].caption.text().endswith('90,00%')
+    assert window.premium_page.cards['gate'].caption.text().endswith('90,0%')
 
 
 def test_gui_mapping_remember_and_reopen(window,tmp_path):

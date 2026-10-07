@@ -83,6 +83,63 @@ def test_product_mapping_requires_explicit_choice_and_uses_calls_engine(desktop,
     assert desktop.mappings.grid.item(0,4).text()=='alias'
 
 
+def test_support_calls_plan_is_editable_used_by_engine_and_persisted(desktop,tmp_path):
+    employee=prepare(desktop,tmp_path,role='SUPPORT')
+    desktop.admin.logout.click()
+    assert not desktop.workflow.is_admin
+    for edit,value in zip(desktop.calls_plan_inputs,('1000','800','600','900')):
+        edit.setText(value)
+    desktop.call_inputs[0].setText('900')
+    desktop.save_inputs_button.click()
+    assert not desktop.error_label.isVisible(),desktop.error_label.text()
+    assert desktop.repository.year_profile(employee.id,2026).calls_plans==tuple(map(Decimal,('1000','800','600','900')))
+    desktop.calculate_button.click()
+    assert desktop.workspace_saved.calculation.quarters[0].calls_bonus==27000
+    assert desktop.workspace_saved.calculation.quarters[0].payable==27050
+    desktop.confirm_payment(1)
+    desktop.refresh_workspace()
+    assert desktop.calls_plan_inputs[0].isReadOnly()
+    assert not desktop.calls_plan_inputs[1].isReadOnly()
+    desktop.close()
+    reopened=WorkspaceWindow(tmp_path/'desktop.db')
+    try:
+        assert [edit.text() for edit in reopened.calls_plan_inputs]==['1000','800','600','900']
+        assert reopened.calls_plan_inputs[0].isReadOnly()
+        assert reopened.workspace_saved.profile.calls_plans[0]==1000
+    finally:reopened.close()
+
+
+@pytest.mark.parametrize('value',['','0','-1','text'])
+def test_support_invalid_calls_plan_does_not_save_or_calculate(desktop,tmp_path,value):
+    employee=prepare(desktop,tmp_path,role='SUPPORT')
+    desktop.calls_plan_inputs[0].setText(value)
+    desktop.calculate_button.click()
+    assert desktop.error_label.isVisible()
+    assert desktop.workspace_saved is None
+    assert desktop.repository.year_profile(employee.id,2026) is None
+
+
+def test_manual_calls_plans_follow_selected_employee_and_year(desktop,tmp_path):
+    from app.models.domain import Plans
+    employee=prepare(desktop,tmp_path,role='SUPPORT')
+    other=desktop.repository.resolve_employee('Гайдина')
+    desktop.workflow.set_role(other.id,2026,'SUPPORT')
+    desktop.workflow.set_role(employee.id,2027,'SUPPORT')
+    sales_plans=Plans('1000','1000','1000','1000')
+    desktop.workflow.save_inputs(employee.id,2026,sales_plans,calls_plans=('1000','800','600','900'))
+    desktop.workflow.save_inputs(other.id,2026,sales_plans,calls_plans=('400','500','600','700'))
+    desktop.workflow.save_inputs(employee.id,2027,sales_plans,calls_plans=('1100','1200','1300','1400'))
+    desktop.refresh_workspace()
+    assert desktop.calls_plan_inputs[0].text()=='1000'
+    desktop.employee.setCurrentIndex(desktop.employee.findData(other.id))
+    assert [e.text() for e in desktop.calls_plan_inputs]==['400','500','600','700']
+    desktop.employee.setCurrentIndex(desktop.employee.findData(employee.id))
+    desktop.year.setValue(2027)
+    assert [e.text() for e in desktop.calls_plan_inputs]==['1100','1200','1300','1400']
+    desktop.year.setValue(2026)
+    assert [e.text() for e in desktop.calls_plan_inputs]==['1000','800','600','900']
+
+
 def test_common_sales_mapping_shows_packaging_and_filters_other_sizes(desktop,tmp_path):
     from tests.test_packaging_mapping import packaged_sales,price_variants
     prepare(desktop,tmp_path,raw='Стандарт')

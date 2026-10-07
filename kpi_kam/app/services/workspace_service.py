@@ -7,7 +7,7 @@ from app.services.price_importer import import_price
 from app.services.sales_importer import import_sales
 from app.services.event_calculation import calculate_events
 from app.services.product_matcher import ProductMatcher
-from app.utils.normalization import CalculationInputError, normalize_text
+from app.utils.normalization import CalculationInputError, normalize_text, decimal_value
 from app.utils.packaging import product_mapping_key,packaging_compatible
 
 
@@ -119,17 +119,27 @@ class WorkspaceService:
             self.repository.connection.execute("INSERT OR REPLACE INTO product_mapping_decisions VALUES (?,?,'unmatched')",(normalize_text(raw),price.id))
             self.repository.connection.execute('DELETE FROM product_aliases WHERE alias_normalized=?',(normalize_text(raw),))
 
-    def save_inputs(self,eid,year,plans,*,calls_facts=None):
+    def save_inputs(self,eid,year,plans,*,calls_plans=None,calls_facts=None):
         role=self.repository.year_role(eid,year)
         if not role:
             raise CalculationInputError('Администратор должен задать должность для сотрудника и года')
+        if calls_plans is not None:
+            calls_plans=tuple(decimal_value(v) for v in calls_plans)
+            if len(calls_plans)!=4 or any(v<=ZERO for v in calls_plans):
+                raise CalculationInputError('Задайте положительный план звонков для каждого квартала Q1–Q4')
+        if calls_facts is not None:
+            calls_facts=tuple(decimal_value(v) for v in calls_facts)
+            if len(calls_facts)!=4 or any(v<ZERO for v in calls_facts):
+                raise CalculationInputError('Задайте неотрицательный факт звонков для каждого квартала Q1–Q4')
         for payment in self.repository.payments(eid,year):
             q=payment.quarter-1
             if plans.values[q]!=payment.snapshot.profile.plans.values[q]:
                 raise CalculationInputError('План оплаченного квартала зафиксирован')
-            if calls_facts is not None and Decimal(calls_facts[q])!=payment.snapshot.profile.calls_facts[q]:
+            if calls_plans is not None and calls_plans[q]!=payment.snapshot.profile.calls_plans[q]:
+                raise CalculationInputError('План звонков оплаченного квартала зафиксирован')
+            if calls_facts is not None and calls_facts[q]!=payment.snapshot.profile.calls_facts[q]:
                 raise CalculationInputError('Факт звонков оплаченного квартала зафиксирован')
-        return self.repository.save_year_profile(eid,year,role,plans,calls_facts=calls_facts)
+        return self.repository.save_year_profile(eid,year,role,plans,calls_plans=calls_plans,calls_facts=calls_facts)
 
     def reconcile_manually(self,return_id,shipment_id,employee_id):
         self.auth.require()

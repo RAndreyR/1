@@ -1,5 +1,5 @@
 """Administrative XLSX export of persisted engine values, without recalculation."""
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 import os
@@ -13,11 +13,36 @@ SUMMARY_HEADERS=['ФИО','роль','год','квартал','план','posit
     'calls plan','calls fact','calls bonus','calculated premium','return clawback','carried clawback',
     'carried in','payable','paid','status','price version','calculation ID']
 
+MONEY_FORMAT='[$-419]0.0'
+PERCENT_FORMAT='[$-419]0.0%'
+MONEY_HEADERS={'план','positive sales','returns','actual after returns',
+    *(f'eligible base B{i}' for i in range(1,5)),
+    'calls bonus','calculated premium','return clawback','carried clawback','carried in','payable','paid',
+    'Выручка','Цена 1 знак','Порог 1 знак','Сумма','Остаток суммы','Clawback','План отгрузок'}
+PERCENT_HEADERS={'% выполнения','Ставка','Исходная ставка'}
+
+
+def _rounded(value,step):
+    with localcontext() as context:
+        context.prec=max(50,len(value.as_tuple().digits)+abs(value.as_tuple().exponent)+4)
+        return value.quantize(Decimal(step),rounding=ROUND_HALF_UP)
+
 
 def _row(sheet,values):
-    # Decimal strings retain all digits. Source strings always stay literal text.
-    sheet.append([format(v,'f') if isinstance(v,Decimal) else v for v in values])
-    for cell in sheet[sheet.max_row]:
+    # Decimal stays numeric in XLSX. Strings from source files stay literal text.
+    sheet.append(values)
+    for i,cell in enumerate(sheet[sheet.max_row],1):
+        header=sheet.cell(1,i).value
+        number_format=MONEY_FORMAT if header in MONEY_HEADERS else PERCENT_FORMAT if header in PERCENT_HEADERS else None
+        if sheet.title=='Параметры' and header=='Значение' and len(values)>=8:
+            parameter=values[6]
+            if parameter in ('plan gate','calls gate') or parameter in {f'B{j} rate' for j in range(1,5)}:
+                number_format=PERCENT_FORMAT
+            elif parameter=='calls max':number_format=MONEY_FORMAT
+        if number_format:
+            cell.number_format=number_format
+            if isinstance(cell.value,(Decimal,int)) and not isinstance(cell.value,bool):
+                cell.value=_rounded(Decimal(cell.value),'0.001' if number_format==PERCENT_FORMAT else '0.1')
         if isinstance(cell.value,str):cell.data_type='s'
 
 
@@ -54,7 +79,7 @@ def export_workspace(repository,path,year,employee_id=None,quarter=None):
             summary=calc.quarters[q-1];result=calc.result.quarters[q-1];payment=payments.get(q)
             _row(book['Сводка'],[name,payment.snapshot.profile.role if payment else snapshot.profile.role,year,q,result.plan,
                 summary.positive_sales,summary.returns,summary.actual,
-                format(result.achievement*100,'f') if result.achievement is not None else 'Не определено',
+                result.achievement if result.achievement is not None else 'Не определено',
                 *(b.base for b in result.blocks),summary.calls_plan,summary.calls_fact,summary.calls_bonus,
                 summary.calculated_premium,summary.clawback,summary.carried_out,summary.carried_in,summary.payable,
                 payment.amount if payment else summary.paid,'paid/closed' if payment else summary.status,

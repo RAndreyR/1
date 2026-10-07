@@ -41,6 +41,25 @@ def test_paid_eligible_return_uses_original_rate_and_price(tmp_path):
         repo.connection.rollback()
 
 
+def test_manual_calls_plans_are_saved_and_paid_quarter_plan_is_protected(tmp_path):
+    repo,service,employee=ready(tmp_path)
+    with repo:
+        service.set_role(employee.id,2026,'SUPPORT')
+        service.logout_admin()
+        plans=Plans('1000','1000','1000','1000')
+        profile=service.save_inputs(employee.id,2026,plans,calls_plans=('1000','800','600','900'),calls_facts=('900','0','0','0'))
+        assert profile.calls_plans[0]==1000
+        snapshot=service.calculate(employee.id,2026)
+        assert snapshot.calculation.quarters[0].calls_bonus==27000
+        service.confirm_payment(snapshot.id,1)
+        with pytest.raises(CalculationInputError,match='План звонков оплаченного квартала'):
+            service.save_inputs(employee.id,2026,plans,calls_plans=('999','800','600','900'))
+        assert repo.year_profile(employee.id,2026)==profile
+        changed=service.save_inputs(employee.id,2026,plans,calls_plans=('1000','1200','600','900'))
+        assert changed.calls_plans[1]==1200
+        assert repo.payments(employee.id,2026)[0].snapshot.profile.calls_plans==profile.calls_plans
+
+
 def test_ineligible_paid_return_no_clawback(tmp_path):
     repo,service,employee=ready(tmp_path,threshold='200')
     with repo:

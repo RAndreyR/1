@@ -165,7 +165,8 @@ def verify_workspace(directory,app):
         sales(False);window.repository.save_sales(import_sales(sales_path,2026))
         price=window.repository.price_version()
         flow.map_product('Синтетический товар',price.products[0].id,packaging='200 мл')
-        flow.save_inputs(employee.id,2026,Plans('1000','1000','1000','1000'),calls_facts=('700','0','0','0'))
+        flow.save_inputs(employee.id,2026,Plans('1000','1000','1000','1000'),
+            calls_plans=('900','800','600','1000'),calls_facts=('840','0','0','0'))
         snapshot=flow.calculate(employee.id,2026)
         assert snapshot.calculation.event_audit[0].event.packaging=='200 мл'
         assert snapshot.calculation.event_audit[0].audit.product.id==price.products[0].id
@@ -179,8 +180,19 @@ def verify_workspace(directory,app):
         window.display_workspace(later)
         assert window.returns.grid.rowCount()==1
         flow.export_data(directory/'export.xlsx',2026,employee_id=employee.id)
-        exported=load_workbook(directory/'export.xlsx');assert 'Возвраты' in exported.sheetnames;exported.close()
+        exported=load_workbook(directory/'export.xlsx')
+        try:
+            assert 'Возвраты' in exported.sheetnames
+            headers={c.value:c.column for c in exported['Сводка'][1]}
+            amount=exported['Сводка'].cell(2,headers['payable'])
+            assert amount.data_type=='n' and amount.value==28050
+            assert amount.number_format=='[$-419]0.0'
+            achievement=exported['Сводка'].cell(2,headers['% выполнения'])
+            assert achievement.data_type=='n' and achievement.number_format=='[$-419]0.0%'
+        finally:exported.close()
         window.refresh_workspace()
+        assert window.calls_plan_inputs[0].text()=='900'
+        assert window.calls_plan_inputs[0].isReadOnly()
         window.mappings.grid.selectRow(0)
         assert window.mappings.products.count()==2
         assert '200 мл' in window.mappings.products.itemText(1)
@@ -191,4 +203,5 @@ def verify_workspace(directory,app):
         assert not reopened.workflow.is_admin
         assert reopened.repository.payments(employee.id,2026)[0].amount==Decimal('28050')
         assert reopened.repository.workspace_snapshot(snapshot.id).status=='paid/closed'
+        assert reopened.calls_plan_inputs[0].text()=='900'
     finally:reopened.close()
